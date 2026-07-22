@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Caprasimo, Figtree } from "next/font/google";
+import { Toaster } from "@/components/ui/sonner";
 import { site } from "@/lib/site";
 import "./globals.css";
 
@@ -78,6 +79,7 @@ export default function RootLayout({
     <html lang="en" className={`${caprasimo.variable} ${figtree.variable}`}>
       <body>
         {children}
+        <Toaster richColors closeButton />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

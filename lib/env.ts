@@ -47,3 +47,18 @@ export function getSupabaseSecretKey(): string {
 export function getInternalHealthSecret(): string | undefined {
   return process.env.INTERNAL_HEALTH_SECRET?.trim() || undefined;
 }
+
+export function getSiteUrl(): string {
+  const raw = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  const parsed = supabaseUrlSchema.safeParse(raw);
+
+  if (parsed.success) {
+    return parsed.data.replace(/\/$/, "");
+  }
+
+  if (process.env.NODE_ENV === "development") {
+    return "http://localhost:3000";
+  }
+
+  throw new Error("Missing or invalid NEXT_PUBLIC_SITE_URL.");
+}

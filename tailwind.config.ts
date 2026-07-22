@@ -1,8 +1,5 @@
 import type { Config } from "tailwindcss";
 
-// The Organic design tokens live as CSS variables in app/globals.css.
-// We surface the ones we lay out with here so utilities like
-// `bg-bg`, `text-accent`, `rounded-lg` map straight onto the system.
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
   theme: {
@@ -13,11 +10,41 @@ const config: Config = {
         text: "var(--color-text)",
         accent: "var(--color-accent)",
         "accent-2": "var(--color-accent-2)",
+        border: "var(--border)",
+        input: "var(--input)",
+        ring: "var(--ring)",
+        background: "var(--background)",
+        foreground: "var(--foreground)",
+        primary: {
+          DEFAULT: "var(--primary)",
+          foreground: "var(--primary-foreground)",
+        },
+        secondary: {
+          DEFAULT: "var(--secondary)",
+          foreground: "var(--secondary-foreground)",
+        },
+        muted: {
+          DEFAULT: "var(--muted)",
+          foreground: "var(--muted-foreground)",
+        },
+        destructive: {
+          DEFAULT: "var(--destructive)",
+          foreground: "var(--destructive-foreground)",
+        },
+        card: {
+          DEFAULT: "var(--card)",
+          foreground: "var(--card-foreground)",
+        },
+        popover: {
+          DEFAULT: "var(--popover)",
+          foreground: "var(--popover-foreground)",
+        },
       },
       borderRadius: {
         sm: "var(--radius-sm)",
         md: "var(--radius-md)",
         lg: "var(--radius-lg)",
+        DEFAULT: "var(--radius)",
       },
       fontFamily: {
         heading: "var(--font-heading)",

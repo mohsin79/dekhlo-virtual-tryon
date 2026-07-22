@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { TryOnStudio } from "@/components/TryOnStudio";
 
@@ -32,6 +33,12 @@ export default function Home() {
             <a className="text-muted" style={{ fontSize: 14, textDecoration: "none" }} href="#try-on">
               How it works
             </a>
+            <Link className="text-muted" href="/auth/login" style={{ fontSize: 14, textDecoration: "none" }}>
+              Sign in
+            </Link>
+            <Link className="text-muted" href="/auth/sign-up" style={{ fontSize: 14, textDecoration: "none" }}>
+              Sign up
+            </Link>
             <span className="tag tag-outline">AI style preview</span>
           </nav>
         </header>

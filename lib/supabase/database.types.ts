@@ -7,31 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       brand_members: {
@@ -129,6 +104,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_brand_with_owner: {
+        Args: { p_name: string; p_slug: string }
+        Returns: string
+      }
       user_has_brand_role: {
         Args: {
           p_brand_id: string
@@ -264,9 +243,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       brand_role: ["owner", "admin", "editor", "analyst"],
