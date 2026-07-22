@@ -5,6 +5,11 @@ const nextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "12mb" },
   },
+  // Dekhlo does not use next/image; disable the built-in optimizer temporarily
+  // while Next.js ships with a patched optional sharp dependency.
+  images: {
+    unoptimized: true,
+  },
 };
 
 export default nextConfig;

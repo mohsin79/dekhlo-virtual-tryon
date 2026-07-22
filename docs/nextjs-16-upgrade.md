@@ -175,3 +175,25 @@ Then confirm Node.js ≥ 20.9.0 is not required for Next.js 14 (Node 18+ was suf
 - Phase 1: Supabase foundation (per `docs/saas-architecture.md`)
 - Re-bump ESLint to 10.x when `eslint-config-next` ships compatible `eslint-plugin-react`
 - Optional: add `"typecheck": "tsc --noEmit"` script for CI
+
+## Temporary image optimizer mitigation
+
+Next.js 16.2.11 installs **sharp 0.34.5** as an optional dependency for its built-in image optimizer (`/_next/image`). That version is flagged by [GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj) until sharp ≥ 0.35.0 ships with a compatible Next.js release.
+
+Dekhlo does **not** use `next/image` or the built-in optimizer. Upload previews use standard `<img>` elements with object URLs or base64; try-on images are sent to OpenAI without local Sharp processing.
+
+To reduce accidental use of the vulnerable optimizer path, `next.config.mjs` sets:
+
+```js
+images: {
+  unoptimized: true,
+},
+```
+
+**Notes:**
+
+- `npm audit --omit=dev` may still report sharp because the optional dependency remains installed.
+- Do **not** remove this setting until Next.js ships with a compatible patched sharp version, or image optimization is moved to a trusted external service.
+- Adding `next/image`, local Sharp processing, or server-side image resizing requires immediate security reassessment.
+
+See also: `docs/supabase-phase-1.md` — **Known upstream dependency advisories**.
