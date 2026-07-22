@@ -8,4 +8,5 @@
 .env.development
 .DS_Store
 *.log
+*.tsbuildinfo
 next-env.d.ts
