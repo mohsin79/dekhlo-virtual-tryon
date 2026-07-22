@@ -114,6 +114,8 @@ No `GRANT ALL` to `anon` or broad write grants to `authenticated` on `brands`.
 
 ## RLS policy matrix
 
+**Total: 10 policies** (3 on `profiles`, 3 on `brands`, 4 on `brand_members`). No `FOR ALL` policies. No client `INSERT` policy on `brands`.
+
 ### `profiles`
 
 | Command | Policy | Rule |
@@ -164,17 +166,66 @@ Run: `npx supabase test db --local` (74 assertions, all passing locally).
 
 ## Remote deployment
 
-After local reset, tests, and lint pass:
+Deployed **2026-07-22** to the linked **Dekhlo** project (ap-south-1). Project reference is stored only in `supabase/.temp/` (gitignored).
+
+### Commands run
 
 ```bash
-npx supabase login
 npx supabase link --project-ref <your-project-ref>
+npx supabase migration list
+npx supabase db push --dry-run
 npx supabase db push
+npx supabase migration list
+npx supabase db lint --linked --fail-on error
 ```
 
-Use the project reference from your Supabase dashboard or `NEXT_PUBLIC_SUPABASE_URL` — do not commit it to the repository.
+### Dry-run result
 
-Verify remotely: three tables exist, RLS enabled, expected policies present, no Phase 3+ tables.
+Only the four Phase 2 migrations were queued:
+
+- `20260722140000_phase2_tenant_schema.sql`
+- `20260722140100_phase2_functions_and_triggers.sql`
+- `20260722140200_phase2_grants.sql`
+- `20260722140300_phase2_rls_policies.sql`
+
+### Push result
+
+All four migrations applied successfully. A non-fatal pg-delta cache warning appeared after apply; migration history confirms all four versions on remote.
+
+### Migration sync
+
+| Local | Remote |
+|-------|--------|
+| `20260722140000` | `20260722140000` |
+| `20260722140100` | `20260722140100` |
+| `20260722140200` | `20260722140200` |
+| `20260722140300` | `20260722140300` |
+
+### Remote verification summary
+
+| Check | Result |
+|-------|--------|
+| Tables | `profiles`, `brands`, `brand_members` only (no Phase 3+ tables) |
+| `brand_role` enum | `owner`, `admin`, `editor`, `analyst` |
+| RLS enabled | All three tenant tables |
+| Policies | 10 (exact names match migration) |
+| `FOR ALL` policies | None |
+| PKs / FKs | `profiles_pkey`, `profiles_id_fkey`, `brands_pkey`, `brand_members_pkey`, member FKs |
+| Indexes | `brands_slug_key`, `brand_members_user_id_idx`, `brand_members_brand_id_idx` |
+| Triggers | `on_auth_user_created`, `profiles_set_updated_at`, `brands_set_updated_at` |
+| `user_has_brand_role` args | `p_brand_id uuid, p_roles brand_role[]` |
+| SECURITY DEFINER `search_path` | Empty (`''`) on `handle_new_user`, `user_has_brand_role` |
+| PUBLIC function EXECUTE | Revoked on sensitive helpers |
+| `anon` table grants | None |
+| `authenticated` / `service_role` grants | Match migration design |
+
+### Remote lint
+
+`npx supabase db lint --linked --fail-on error` — **no schema errors**.
+
+### Remote type comparison
+
+Generated linked types to `supabase/.temp/database.types.remote.ts` (ignored). The `public` schema block matches `lib/supabase/database.types.ts` exactly. Wrapper differences (`graphql_public` in local-only generation, `__InternalSupabase` in linked output) are expected and do not affect tenant types. Temporary comparison file deleted.
 
 ## Rollback
 
