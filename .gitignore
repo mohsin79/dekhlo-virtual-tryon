@@ -10,3 +10,7 @@
 *.log
 *.tsbuildinfo
 next-env.d.ts
+
+# Supabase CLI temporary files
+supabase/.temp/
+supabase/.branches/
