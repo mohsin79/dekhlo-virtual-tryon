@@ -1,21 +1,37 @@
-import OpenAI, { toFile } from "openai";
+import OpenAI from "openai";
+import {
+  TRY_ON_CHAT_MODEL,
+  TRY_ON_IMAGE_QUALITY,
+  TRY_ON_VISION_DETAIL,
+} from "@/lib/try-on-config";
+import { TRY_ON_PROMPT } from "@/lib/try-on-prompt";
 
-// The try-on generation runs on the Node runtime (needs the OpenAI SDK
-// + file handling). It is intentionally not edge.
+// Chat + image_generation tool — same flow as ChatGPT, tuned for speed and cost.
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 180;
 
-const MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 const MAX_BYTES = 8 * 1024 * 1024; // 8MB per image
 
-const PROMPT = [
-  "Create a realistic virtual try-on image.",
-  "The FIRST image is a photo of a person. The SECOND image is a clothing item (a garment, possibly worn by a model).",
-  "Show the SAME person from the first image now wearing the outfit from the second image.",
-  "Preserve the person's face, body shape, skin tone, hair and pose. Replace only their clothing with the provided outfit.",
-  "Keep the garment's design, colour, pattern and details faithful. Full-length, natural lighting, photorealistic.",
-  "This is a STYLE preview, not a guaranteed physical fit — prioritise a believable, flattering look over exact tailoring.",
-].join(" ");
+type ImageGenTool = OpenAI.Responses.Tool.ImageGeneration & {
+  action?: "auto" | "generate" | "edit";
+};
+
+async function fileToDataUrl(file: File): Promise<string> {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  return `data:${file.type};base64,${buffer.toString("base64")}`;
+}
+
+function extractGeneratedImage(response: OpenAI.Responses.Response): string | null {
+  const calls = response.output.filter(
+    (item): item is OpenAI.Responses.ResponseOutputItem.ImageGenerationCall =>
+      item.type === "image_generation_call" && item.status === "completed" && !!item.result,
+  );
+  return calls.at(-1)?.result ?? null;
+}
+
+function isReasoningModel(model: string): boolean {
+  return /^gpt-5|^o[134]/.test(model);
+}
 
 export async function POST(req: Request) {
   if (!process.env.OPENAI_API_KEY) {
@@ -33,12 +49,12 @@ export async function POST(req: Request) {
   }
 
   const person = form.get("person");
-  const outfit = form.get("outfit");
+  const item = form.get("item") ?? form.get("outfit");
 
-  if (!(person instanceof File) || !(outfit instanceof File)) {
-    return Response.json({ error: "Please provide both your photo and an outfit image." }, { status: 400 });
+  if (!(person instanceof File) || !(item instanceof File)) {
+    return Response.json({ error: "Please provide both your photo and an item image." }, { status: 400 });
   }
-  for (const f of [person, outfit]) {
+  for (const f of [person, item]) {
     if (!f.type.startsWith("image/")) {
       return Response.json({ error: "Both uploads must be images." }, { status: 400 });
     }
@@ -49,21 +65,45 @@ export async function POST(req: Request) {
 
   try {
     const client = new OpenAI();
-    const images = await Promise.all([
-      toFile(Buffer.from(await person.arrayBuffer()), "person.png", { type: person.type }),
-      toFile(Buffer.from(await outfit.arrayBuffer()), "outfit.png", { type: outfit.type }),
+    const [personUrl, itemUrl] = await Promise.all([
+      fileToDataUrl(person),
+      fileToDataUrl(item),
     ]);
 
-    const result = await client.images.edit({
-      model: MODEL,
-      image: images,
-      prompt: PROMPT,
-      size: "1024x1536",
+    const response = await client.responses.create({
+      model: TRY_ON_CHAT_MODEL,
+      // Skip chat deliberation — go straight to image generation.
+      tool_choice: { type: "image_generation" },
+      // If using a reasoning model, keep effort low to save time and tokens.
+      ...(isReasoningModel(TRY_ON_CHAT_MODEL)
+        ? { reasoning: { effort: "low" as const } }
+        : {}),
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: TRY_ON_PROMPT },
+            { type: "input_image", image_url: personUrl, detail: TRY_ON_VISION_DETAIL },
+            { type: "input_image", image_url: itemUrl, detail: TRY_ON_VISION_DETAIL },
+          ],
+        },
+      ],
+      tools: [
+        {
+          type: "image_generation",
+          action: "edit",
+          quality: TRY_ON_IMAGE_QUALITY,
+          size: "auto",
+        } as ImageGenTool,
+      ],
     });
 
-    const b64 = result.data?.[0]?.b64_json;
+    const b64 = extractGeneratedImage(response);
     if (!b64) {
-      return Response.json({ error: "The model did not return an image. Please try again." }, { status: 502 });
+      return Response.json(
+        { error: "The model did not return an image. Please try again." },
+        { status: 502 },
+      );
     }
 
     return Response.json({ image: `data:image/png;base64,${b64}` });

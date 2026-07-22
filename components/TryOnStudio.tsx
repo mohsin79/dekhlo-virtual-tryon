@@ -30,7 +30,7 @@ export function TryOnStudio() {
     try {
       const body = new FormData();
       body.append("person", personFile);
-      body.append("outfit", outfitFile);
+      body.append("item", outfitFile);
       const res = await fetch("/api/try-on", { method: "POST", body });
       if (!res.ok) {
         const { error: msg } = await res.json().catch(() => ({ error: "Something went wrong." }));
@@ -80,12 +80,12 @@ export function TryOnStudio() {
             onChange={setPersonFile}
           />
           <Uploader
-            id="outfit"
+            id="item"
             index="02"
             indexColor="var(--color-accent-2-700)"
-            title="The outfit"
-            hint="A flat product shot or a model."
-            placeholder="Drop a garment, or a model wearing it"
+            title="The item"
+            hint="Clothing, hat, glasses, makeup, or any accessory."
+            placeholder="Drop a garment, accessory, or product photo"
             borderColor="var(--color-accent-2-400)"
             onChange={(f) => {
               setOutfitFile(f);
@@ -171,7 +171,7 @@ export function TryOnStudio() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                     <div>
                       <div className="text-muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>
-                        The outfit you chose
+                        The item you chose
                       </div>
                       <div style={{ borderRadius: "var(--radius-md)", overflow: "hidden", aspectRatio: "3 / 4", maxWidth: 180, boxShadow: "var(--shadow-sm)" }}>
                         {outfitPreview && (
@@ -201,7 +201,7 @@ export function TryOnStudio() {
                   </button>
                   <button className="btn btn-secondary" onClick={reset}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.36 2.64L3 8" /><path d="M3 3v5h5" /></svg>
-                    Try another outfit
+                    Try another item
                   </button>
                 </div>
               </>

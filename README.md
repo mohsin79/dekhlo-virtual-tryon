@@ -8,7 +8,7 @@ Dekhlo is an AI virtual try-on for Pakistani fashion — shalwar kameez, abayas,
 
 - **Next.js 14 (App Router) + React 18 + TypeScript** — server-rendered marketing copy and a first-class **SEO** story: the Metadata API (title template, OpenGraph, Twitter, canonical), `sitemap.ts`, `robots.ts`, a PWA `manifest.ts`, JSON-LD structured data, and a generated `opengraph-image`. Great for **branding** (custom domain, OG cards, installable PWA) and easy one-click deploys.
 - **Tailwind CSS** for layout, over the **Organic design system** tokens (warm cream ground, terracotta + sage accents, Caprasimo/Figtree type) ported into `app/globals.css`.
-- **OpenAI image API** (`gpt-image-1`) in a server route for the try-on generation — the key never touches the browser.
+- **OpenAI Responses API** — chat model (`gpt-5.6`) with the `image_generation` tool, matching the ChatGPT virtual try-on flow. Works for clothing, accessories, makeup, and more.
 
 ## Getting started
 
@@ -23,19 +23,22 @@ npm run dev                  # http://localhost:3000
 | Variable | Purpose |
 | --- | --- |
 | `OPENAI_API_KEY` | **Required.** Server-side key for the try-on route. |
-| `OPENAI_IMAGE_MODEL` | Optional. Defaults to `gpt-image-1`. |
+| `OPENAI_CHAT_MODEL` | Optional. Defaults to `gpt-5.6`. Use `gpt-4.1-mini` after org verification for lower cost. |
+| `OPENAI_IMAGE_QUALITY` | Optional. `medium` (default), `high`, `low`, or `auto`. |
+| `OPENAI_VISION_DETAIL` | Optional. `low` (default) or `high` for upload analysis. |
 | `NEXT_PUBLIC_SITE_URL` | Your production URL — feeds canonical URLs, sitemap, robots, OG tags. |
 
 ## How the try-on works
 
-`POST /api/try-on` (multipart) with `person` and `outfit` image files →
-the route validates them, calls `openai.images.edit({ model, image: [person, outfit], prompt })`,
-and returns `{ image: "data:image/png;base64,…" }`. The client shows it side-by-side
-with the chosen outfit and the honest "style, not fit" note.
+`POST /api/try-on` (multipart) with `person` and `item` image files →
+the route sends both images plus the virtual try-on prompt to `openai.responses.create`
+with the `image_generation` tool (same approach as ChatGPT), and returns
+`{ image: "data:image/png;base64,…" }`. The client shows it side-by-side
+with the chosen item and the honest "style, not fit" note.
 
-- Runs on the Node runtime; `maxDuration` is 60s.
+- Runs on the Node runtime; `maxDuration` is 180s.
 - Images are capped at 8MB each and never stored server-side.
-- Tune the generation by editing `PROMPT` in `app/api/try-on/route.ts`.
+- Tune the prompt in `lib/try-on-prompt.ts`.
 
 ## Project structure
 
