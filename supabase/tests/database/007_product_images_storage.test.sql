@@ -3,7 +3,7 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET search_path TO extensions, public, auth;
 
-SELECT plan(13);
+SELECT plan(15);
 
 SELECT is(
   (SELECT public FROM storage.buckets WHERE id = 'product-images'),
@@ -58,8 +58,8 @@ SELECT is(
       AND tablename = 'objects'
       AND policyname LIKE 'product_images_%'
   ),
-  2::bigint,
-  'product-images has insert and delete storage policies'
+  3::bigint,
+  'product-images has insert, select and delete storage policies'
 );
 
 SELECT is(
@@ -73,6 +73,30 @@ SELECT is(
   ),
   0::bigint,
   'product-images has no FOR ALL storage policy'
+);
+
+SELECT ok(
+  EXISTS (
+    SELECT 1
+    FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'product_images_select_editors'
+      AND cmd = 'SELECT'
+  ),
+  'product-images has select policy for merchant remove operations'
+);
+
+SELECT ok(
+  EXISTS (
+    SELECT 1
+    FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'product_images_delete_editors'
+      AND cmd = 'DELETE'
+  ),
+  'product-images has delete policy scoped to brand folder membership'
 );
 
 SELECT tests.create_auth_user('11111111-1111-1111-1111-111111111111'::uuid, 'owner-a@test.local', 'Owner A');

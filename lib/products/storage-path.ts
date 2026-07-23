@@ -24,3 +24,41 @@ export function isSafeProductImagePath(path: string | null | undefined): path is
 
   return /^[0-9a-f-]{36}\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|jpeg|png|webp)$/i.test(value);
 }
+
+export function isProductImagePathForProduct(
+  path: string,
+  brandId: string,
+  productId: string,
+): boolean {
+  if (!isSafeProductImagePath(path)) {
+    return false;
+  }
+
+  const [pathBrandId, pathProductId] = path.split("/");
+
+  return pathBrandId === brandId && pathProductId === productId;
+}
+
+export function shouldRemoveReplacedProductImage(
+  oldPath: string,
+  newPath: string,
+  hasReplacement: boolean,
+): boolean {
+  if (!hasReplacement) {
+    return false;
+  }
+
+  return oldPath !== newPath;
+}
+
+export function canRemoveProductImagePath(
+  path: string | null | undefined,
+  brandId: string,
+  productId: string,
+): path is string {
+  if (!path) {
+    return false;
+  }
+
+  return isProductImagePathForProduct(path, brandId, productId);
+}

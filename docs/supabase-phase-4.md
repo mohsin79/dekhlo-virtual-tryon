@@ -34,6 +34,7 @@ On Windows, use Node to avoid PowerShell redirect encoding issues (see Phase 2 d
 | `20260723100200_phase4_product_images_storage.sql` | `product-images` bucket, path helpers, Storage RLS |
 | `20260723110000_phase4_public_catalog_read.sql` | Public active-product read policy, catalog view, slug RPC |
 | `20260723120000_phase4_authenticated_public_products_hardening.sql` | Restrict public table access to anon; harden view and RPC |
+| `20260723130000_phase4_product_images_select_for_remove.sql` | Storage SELECT policy so merchant `.remove()` works |
 
 Do **not** edit Phase 2 or Phase 3 migration files.
 
@@ -196,7 +197,10 @@ Two policies on `storage.objects` (no `FOR ALL`, no UPDATE policy — replacemen
 | Command | Policy | Rule |
 |---------|--------|------|
 | INSERT | `product_images_insert_editors` | `bucket_id = 'product-images'`, valid path, editor+ role on path brand |
+| SELECT | `product_images_select_editors` | same tenant checks; required by Supabase Storage `.remove()` |
 | DELETE | `product_images_delete_editors` | same checks for delete |
+
+Replacement cleanup deletes the previous object **after** the product row updates. The DELETE policy is based on brand-folder membership, not on the object still being referenced by `products.product_image_path`.
 
 No anonymous INSERT/DELETE. No broad anonymous SELECT/list policy — public bucket serves direct object URLs.
 
@@ -270,10 +274,10 @@ Server Actions in `app/dashboard/products/actions.ts`:
 |------|------------|
 | `005_products_schema.test.sql` | 21 |
 | `006_products_rls.test.sql` | 12 |
-| `007_product_images_storage.test.sql` | 13 |
+| `007_product_images_storage.test.sql` | 15 |
 | `008_public_catalog_read.test.sql` | 24 |
 
-**Total Phase 4:** 70 assertions. Full suite: 162 tests.
+**Total Phase 4:** 72 assertions. Full suite: 164 tests.
 
 ## Remote deployment
 

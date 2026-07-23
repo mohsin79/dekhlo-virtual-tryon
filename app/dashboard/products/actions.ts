@@ -8,12 +8,20 @@ import { PRODUCT_IMAGES_BUCKET } from "@/lib/products/constants";
 import { mapProductErrorMessage } from "@/lib/products/errors";
 import { validateProductImageFile } from "@/lib/products/image-validation";
 import { canManageProducts } from "@/lib/products/permissions";
-import { buildProductImageStoragePath, isSafeProductImagePath } from "@/lib/products/storage-path";
+import {
+  logProductImageCleanupFailure,
+  removeProductImage,
+} from "@/lib/products/remove-product-image";
+import {
+  buildProductImageStoragePath,
+  shouldRemoveReplacedProductImage,
+} from "@/lib/products/storage-path";
 import { createClient } from "@/lib/supabase/server";
 import { productFieldsSchema, productIdSchema } from "@/lib/validation/product";
 
 export type ProductActionState = {
   error?: string;
+  warning?: string;
   fieldErrors?: Record<string, string>;
 };
 
@@ -39,16 +47,16 @@ function parseIsActive(value: FormDataEntryValue | null): boolean {
   return normalized === "true" || normalized === "on" || normalized === "1";
 }
 
-async function removeProductImage(path: string | null | undefined): Promise<void> {
-  if (!isSafeProductImagePath(path)) {
-    return;
-  }
+async function removeUploadedProductImage(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  path: string,
+  brandId: string,
+  productId: string,
+): Promise<void> {
+  const result = await removeProductImage(supabase, path, { brandId, productId });
 
-  const supabase = await createClient();
-  const { error } = await supabase.storage.from(PRODUCT_IMAGES_BUCKET).remove([path]);
-
-  if (error) {
-    console.warn("[product-image-cleanup] Failed to remove storage object.");
+  if (!result.ok) {
+    logProductImageCleanupFailure({ brandId, productId }, result.errorCode);
   }
 }
 
@@ -118,7 +126,7 @@ export async function createProductAction(
   });
 
   if (insertError) {
-    await removeProductImage(storagePath);
+    await removeUploadedProductImage(supabase, storagePath, brandId, productId);
     return { error: mapProductErrorMessage(insertError) };
   }
 
@@ -173,7 +181,8 @@ export async function updateProductAction(
 
   const imageFile = formData.get("image") as File | null;
   const hasReplacement = imageFile instanceof File && imageFile.size > 0;
-  let nextImagePath = existing.product_image_path;
+  const oldProductImagePath = existing.product_image_path;
+  let nextImagePath = oldProductImagePath;
   let uploadedPath: string | null = null;
 
   if (hasReplacement) {
@@ -212,17 +221,35 @@ export async function updateProductAction(
 
   if (updateError) {
     if (uploadedPath) {
-      await removeProductImage(uploadedPath);
+      await removeUploadedProductImage(supabase, uploadedPath, brandId, productId);
     }
 
     return { error: mapProductErrorMessage(updateError) };
   }
 
-  if (uploadedPath && existing.product_image_path !== uploadedPath) {
-    await removeProductImage(existing.product_image_path);
+  let imageCleanupWarning: string | undefined;
+
+  if (
+    shouldRemoveReplacedProductImage(oldProductImagePath, nextImagePath, hasReplacement)
+  ) {
+    const cleanupResult = await removeProductImage(supabase, oldProductImagePath, {
+      brandId,
+      productId,
+    });
+
+    if (!cleanupResult.ok) {
+      logProductImageCleanupFailure({ brandId, productId }, cleanupResult.errorCode);
+      imageCleanupWarning =
+        "Product saved, but the previous image could not be removed automatically.";
+    }
   }
 
   revalidateProductPaths(productId);
+
+  if (imageCleanupWarning) {
+    redirect("/dashboard/products?imageCleanup=pending");
+  }
+
   redirect("/dashboard/products");
 }
 
@@ -268,7 +295,7 @@ export async function deleteProductAction(formData: FormData): Promise<ProductAc
     return { error: mapProductErrorMessage(deleteError) };
   }
 
-  await removeProductImage(existing.product_image_path);
+  await removeUploadedProductImage(supabase, existing.product_image_path, brandId, productId);
   revalidateProductPaths();
   redirect("/dashboard/products");
 }
