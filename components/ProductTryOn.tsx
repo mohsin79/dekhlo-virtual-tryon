@@ -7,6 +7,11 @@ import {
   shouldResetAttemptOnPhotoChange,
   type ProductTryOnPhase,
 } from "@/lib/try-on/sessions/session-upload-eligibility";
+import {
+  preparePersonPhotoForUpload,
+  validatePersonPhotoFileSize,
+  validatePersonPhotoMimeType,
+} from "@/lib/try-on/sessions/person-photo-resize";
 import type { Database } from "@/lib/supabase/database.types";
 
 type TryOnSessionStatus = Database["public"]["Enums"]["try_on_session_status"];
@@ -63,6 +68,27 @@ export function ProductTryOn({
         resetAttemptState();
       }
 
+      if (!file) {
+        setPersonFile(null);
+        setError(null);
+        return;
+      }
+
+      const mimeError = validatePersonPhotoMimeType(file.type);
+      if (mimeError) {
+        setPersonFile(null);
+        setError(mimeError.message);
+        return;
+      }
+
+      const sizeError = validatePersonPhotoFileSize(file);
+      if (sizeError) {
+        setPersonFile(null);
+        setError(sizeError.message);
+        return;
+      }
+
+      setError(null);
       setPersonFile(file);
     },
     [phase, resetAttemptState],
@@ -71,6 +97,7 @@ export function ProductTryOn({
   const canStart =
     !!personFile &&
     phase !== "creating" &&
+    phase !== "optimizing" &&
     phase !== "uploading" &&
     phase !== "validating" &&
     phase !== "generating";
@@ -119,14 +146,22 @@ export function ProductTryOn({
         sessionStatus: createPayload.status ?? "pending_upload",
       };
 
+      setPhase("optimizing");
+
+      const prepared = await preparePersonPhotoForUpload(personFile);
+
+      if (!prepared.ok) {
+        throw new Error(prepared.error.message);
+      }
+
       setPhase("uploading");
 
       const uploadResponse = await fetch(createPayload.uploadUrl, {
         method: "PUT",
         headers: {
-          "Content-Type": personFile.type,
+          "Content-Type": prepared.value.mimeType,
         },
-        body: personFile,
+        body: prepared.value.file,
       });
 
       if (!uploadResponse.ok) {
@@ -203,6 +238,7 @@ export function ProductTryOn({
 
   const busy =
     phase === "creating" ||
+    phase === "optimizing" ||
     phase === "uploading" ||
     phase === "validating" ||
     phase === "generating";
@@ -232,6 +268,7 @@ export function ProductTryOn({
             hint="Full-length, front-facing, well-lit."
             placeholder="Drop your photo, or click to browse"
             borderColor="var(--color-accent-400)"
+            accept="image/jpeg,image/png,image/webp"
             washed
             onChange={handlePersonFileChange}
           />
@@ -274,6 +311,7 @@ export function ProductTryOn({
           {busy ? (
             <p className="text-muted-foreground">
               {phase === "creating" && "Creating secure session…"}
+              {phase === "optimizing" && "Optimizing your photo…"}
               {phase === "uploading" && "Uploading your photo…"}
               {phase === "validating" && "Validating upload and reserving credits…"}
               {phase === "generating" && "Generating your try-on…"}

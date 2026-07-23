@@ -11,6 +11,7 @@ export function isSessionUploadReusable(status: TryOnSessionStatus): boolean {
 export type ProductTryOnPhase =
   | "idle"
   | "creating"
+  | "optimizing"
   | "uploading"
   | "validating"
   | "generating"

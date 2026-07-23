@@ -11,6 +11,7 @@ export type UploaderProps = {
   placeholder: string;
   borderColor: string;    // dashed border color
   washed?: boolean;       // apply the .washed treatment to previews (people)
+  accept?: string;
   onChange: (file: File | null) => void;
 };
 
@@ -23,6 +24,7 @@ export function Uploader({
   placeholder,
   borderColor,
   washed,
+  accept = "image/*",
   onChange,
 }: UploaderProps) {
   const [preview, setPreview] = useState<string | null>(null);
@@ -108,7 +110,7 @@ export function Uploader({
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept={accept}
         hidden
         onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
       />
