@@ -9,6 +9,45 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      brand_credit_balances: {
+        Row: {
+          brand_id: string
+          consumed_credits: number
+          granted_credits: number
+          reserved_credits: number
+          updated_at: string
+        }
+        Insert: {
+          brand_id: string
+          consumed_credits?: number
+          granted_credits?: number
+          reserved_credits?: number
+          updated_at?: string
+        }
+        Update: {
+          brand_id?: string
+          consumed_credits?: number
+          granted_credits?: number
+          reserved_credits?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "brand_credit_balances_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: true
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "brand_credit_balances_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: true
+            referencedRelation: "public_catalog_products"
+            referencedColumns: ["brand_id"]
+          },
+        ]
+      }
       brand_members: {
         Row: {
           brand_id: string
@@ -81,6 +120,51 @@ export type Database = {
           widget_config?: Json
         }
         Relationships: []
+      }
+      credit_transactions: {
+        Row: {
+          amount: number
+          brand_id: string
+          created_at: string
+          id: string
+          idempotency_key: string
+          metadata: Json
+          type: Database["public"]["Enums"]["credit_transaction_type"]
+        }
+        Insert: {
+          amount: number
+          brand_id: string
+          created_at?: string
+          id?: string
+          idempotency_key: string
+          metadata?: Json
+          type: Database["public"]["Enums"]["credit_transaction_type"]
+        }
+        Update: {
+          amount?: number
+          brand_id?: string
+          created_at?: string
+          id?: string
+          idempotency_key?: string
+          metadata?: Json
+          type?: Database["public"]["Enums"]["credit_transaction_type"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credit_transactions_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credit_transactions_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "public_catalog_products"
+            referencedColumns: ["brand_id"]
+          },
+        ]
       }
       products: {
         Row: {
@@ -198,6 +282,23 @@ export type Database = {
           widget_config: Json
         }[]
       }
+      grant_brand_credits: {
+        Args: {
+          p_amount: number
+          p_brand_id: string
+          p_idempotency_key: string
+          p_metadata?: Json
+        }
+        Returns: {
+          available_credits: number
+          brand_id: string
+          consumed_credits: number
+          granted_credits: number
+          reserved_credits: number
+          transaction_id: string
+          was_created: boolean
+        }[]
+      }
       is_valid_product_image_path: {
         Args: { object_path: string }
         Returns: boolean
@@ -216,6 +317,7 @@ export type Database = {
     }
     Enums: {
       brand_role: "owner" | "admin" | "editor" | "analyst"
+      credit_transaction_type: "grant" | "reserve" | "consume" | "release"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -344,6 +446,7 @@ export const Constants = {
   public: {
     Enums: {
       brand_role: ["owner", "admin", "editor", "analyst"],
+      credit_transaction_type: ["grant", "reserve", "consume", "release"],
     },
   },
 } as const

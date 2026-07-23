@@ -13,11 +13,13 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import type { UserContext } from "@/lib/auth/get-user-context";
+import { canViewCredits } from "@/lib/credits/permissions";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/products", label: "Products" },
+  { href: "/dashboard/credits", label: "Credits", requiresCreditAccess: true },
 ] as const;
 
 function formatRole(role: string | null): string {
@@ -37,10 +39,14 @@ function initials(name: string | null, email: string | null): string {
   return email?.slice(0, 2).toUpperCase() ?? "U";
 }
 
-function SidebarNav({ pathname }: { pathname: string }) {
+function SidebarNav({ pathname, context }: { pathname: string; context: UserContext }) {
+  const items = NAV_ITEMS.filter(
+    (item) => !("requiresCreditAccess" in item) || canViewCredits(context.currentRole),
+  );
+
   return (
     <nav className="flex flex-col gap-1" aria-label="Dashboard">
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const isActive =
           pathname === item.href ||
           (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`));
@@ -95,7 +101,7 @@ export function DashboardShell({
           </Link>
           <BrandSummary context={context} />
           <Separator />
-          <SidebarNav pathname={pathname} />
+          <SidebarNav pathname={pathname} context={context} />
           <div className="mt-auto space-y-3">
             <Separator />
             <LogoutButton />
@@ -117,7 +123,7 @@ export function DashboardShell({
                 </SheetHeader>
                 <div className="mt-6 space-y-6">
                   <BrandSummary context={context} />
-                  <SidebarNav pathname={pathname} />
+                  <SidebarNav pathname={pathname} context={context} />
                   <LogoutButton />
                 </div>
               </SheetContent>
