@@ -31,7 +31,7 @@ export function TryOnStudio() {
       const body = new FormData();
       body.append("person", personFile);
       body.append("item", outfitFile);
-      const res = await fetch("/api/try-on", { method: "POST", body });
+      const res = await fetch("/api/demo/try-on", { method: "POST", body });
       if (!res.ok) {
         const { error: msg } = await res.json().catch(() => ({ error: "Something went wrong." }));
         throw new Error(msg || "Something went wrong.");

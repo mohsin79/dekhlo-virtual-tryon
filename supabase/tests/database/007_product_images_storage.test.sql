@@ -28,8 +28,8 @@ SELECT ok(
 
 SELECT is(
   (SELECT count(*)::bigint FROM storage.buckets WHERE id IN ('customer-uploads', 'try-on-results')),
-  0::bigint,
-  'customer and try-on buckets do not exist'
+  2::bigint,
+  'customer-uploads and try-on-results buckets exist'
 );
 
 SELECT ok(

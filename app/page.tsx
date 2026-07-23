@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
-import { TryOnStudio } from "@/components/TryOnStudio";
 
 export default function Home() {
   return (
@@ -21,18 +20,14 @@ export default function Home() {
       />
 
       <div style={{ position: "relative", maxWidth: 1160, margin: "0 auto", padding: "28px 40px 88px" }}>
-        {/* Header */}
         <header className="flex items-center gap-4" style={{ marginBottom: 64 }}>
           <div style={{ marginRight: "auto" }}>
             <Logo />
           </div>
           <nav className="flex items-center" style={{ gap: 26 }}>
-            <a className="text-muted" style={{ fontSize: 14, textDecoration: "none" }} href="#try-on">
-              Try-on
-            </a>
-            <a className="text-muted" style={{ fontSize: 14, textDecoration: "none" }} href="#try-on">
-              How it works
-            </a>
+            <Link className="text-muted" href="/demo" style={{ fontSize: 14, textDecoration: "none" }}>
+              Try demo
+            </Link>
             <Link className="text-muted" href="/auth/login" style={{ fontSize: 14, textDecoration: "none" }}>
               Sign in
             </Link>
@@ -43,7 +38,6 @@ export default function Home() {
           </nav>
         </header>
 
-        {/* Editorial hero — server-rendered for SEO */}
         <section
           className="dl-rise"
           style={{ display: "flex", flexWrap: "wrap", gap: 48, alignItems: "flex-end", marginBottom: 56 }}
@@ -58,10 +52,17 @@ export default function Home() {
             <h1 style={{ fontSize: "clamp(44px,6.4vw,78px)", lineHeight: 0.98, margin: "0 0 20px", maxWidth: "12ch" }}>
               How might this look on you?
             </h1>
-            <p style={{ fontSize: 18, maxWidth: 440, margin: 0 }}>
-              Add your photo and any Pakistani outfit — shalwar kameez, abaya, bridal or western — and
-              see the style previewed on you before you decide.
+            <p style={{ fontSize: 18, maxWidth: 440, margin: "0 0 24px" }}>
+              Dekhlo helps Pakistani fashion brands offer secure virtual try-on on their own products, with
+              merchant credits and private customer media handled server-side.
             </p>
+            <Link
+              href="/demo"
+              className="btn btn-primary"
+              style={{ display: "inline-flex", padding: "15px 34px", fontSize: 15, textDecoration: "none" }}
+            >
+              Open the public demo
+            </Link>
           </div>
 
           <div style={{ flex: "1 1 280px", minWidth: 260 }}>
@@ -81,9 +82,6 @@ export default function Home() {
             </div>
           </div>
         </section>
-
-        {/* Interactive try-on tool (client) */}
-        <TryOnStudio />
       </div>
     </div>
   );

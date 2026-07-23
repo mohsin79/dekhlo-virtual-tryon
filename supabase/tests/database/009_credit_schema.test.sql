@@ -55,14 +55,14 @@ SELECT fk_ok(
 );
 
 SELECT ok(
-  NOT EXISTS (
+  EXISTS (
     SELECT 1
     FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name = 'credit_transactions'
       AND column_name = 'session_id'
   ),
-  'credit_transactions has no session_id column'
+  'credit_transactions has session_id column'
 );
 
 SELECT is(

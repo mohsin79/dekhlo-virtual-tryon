@@ -129,6 +129,7 @@ export type Database = {
           id: string
           idempotency_key: string
           metadata: Json
+          session_id: string | null
           type: Database["public"]["Enums"]["credit_transaction_type"]
         }
         Insert: {
@@ -138,6 +139,7 @@ export type Database = {
           id?: string
           idempotency_key: string
           metadata?: Json
+          session_id?: string | null
           type: Database["public"]["Enums"]["credit_transaction_type"]
         }
         Update: {
@@ -147,6 +149,7 @@ export type Database = {
           id?: string
           idempotency_key?: string
           metadata?: Json
+          session_id?: string | null
           type?: Database["public"]["Enums"]["credit_transaction_type"]
         }
         Relationships: [
@@ -163,6 +166,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "public_catalog_products"
             referencedColumns: ["brand_id"]
+          },
+          {
+            foreignKeyName: "credit_transactions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "merchant_try_on_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credit_transactions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "try_on_sessions"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -244,8 +261,175 @@ export type Database = {
         }
         Relationships: []
       }
+      try_on_sessions: {
+        Row: {
+          anonymous_token_hash: string
+          brand_id: string
+          client_request_id: string
+          completed_at: string | null
+          consent_to_store: boolean
+          created_at: string
+          credit_cost: number | null
+          deleted_at: string | null
+          error_code: string | null
+          expires_at: string
+          id: string
+          person_storage_path: string | null
+          product_id: string
+          provider_job_id: string | null
+          provider_request_id: string | null
+          result_storage_path: string | null
+          sanitized_error_message: string | null
+          status: Database["public"]["Enums"]["try_on_session_status"]
+          upload_validated_at: string | null
+        }
+        Insert: {
+          anonymous_token_hash: string
+          brand_id: string
+          client_request_id: string
+          completed_at?: string | null
+          consent_to_store?: boolean
+          created_at?: string
+          credit_cost?: number | null
+          deleted_at?: string | null
+          error_code?: string | null
+          expires_at: string
+          id?: string
+          person_storage_path?: string | null
+          product_id: string
+          provider_job_id?: string | null
+          provider_request_id?: string | null
+          result_storage_path?: string | null
+          sanitized_error_message?: string | null
+          status?: Database["public"]["Enums"]["try_on_session_status"]
+          upload_validated_at?: string | null
+        }
+        Update: {
+          anonymous_token_hash?: string
+          brand_id?: string
+          client_request_id?: string
+          completed_at?: string | null
+          consent_to_store?: boolean
+          created_at?: string
+          credit_cost?: number | null
+          deleted_at?: string | null
+          error_code?: string | null
+          expires_at?: string
+          id?: string
+          person_storage_path?: string | null
+          product_id?: string
+          provider_job_id?: string | null
+          provider_request_id?: string | null
+          result_storage_path?: string | null
+          sanitized_error_message?: string | null
+          status?: Database["public"]["Enums"]["try_on_session_status"]
+          upload_validated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "try_on_sessions_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "try_on_sessions_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "public_catalog_products"
+            referencedColumns: ["brand_id"]
+          },
+          {
+            foreignKeyName: "try_on_sessions_brand_product_fkey"
+            columns: ["brand_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["brand_id", "id"]
+          },
+        ]
+      }
     }
     Views: {
+      merchant_try_on_sessions: {
+        Row: {
+          brand_id: string | null
+          client_request_id: string | null
+          completed_at: string | null
+          consent_to_store: boolean | null
+          created_at: string | null
+          credit_cost: number | null
+          deleted_at: string | null
+          error_code: string | null
+          expires_at: string | null
+          id: string | null
+          product_id: string | null
+          provider_job_id: string | null
+          provider_request_id: string | null
+          sanitized_error_message: string | null
+          status: Database["public"]["Enums"]["try_on_session_status"] | null
+          upload_validated_at: string | null
+        }
+        Insert: {
+          brand_id?: string | null
+          client_request_id?: string | null
+          completed_at?: string | null
+          consent_to_store?: boolean | null
+          created_at?: string | null
+          credit_cost?: number | null
+          deleted_at?: string | null
+          error_code?: string | null
+          expires_at?: string | null
+          id?: string | null
+          product_id?: string | null
+          provider_job_id?: string | null
+          provider_request_id?: string | null
+          sanitized_error_message?: string | null
+          status?: Database["public"]["Enums"]["try_on_session_status"] | null
+          upload_validated_at?: string | null
+        }
+        Update: {
+          brand_id?: string | null
+          client_request_id?: string | null
+          completed_at?: string | null
+          consent_to_store?: boolean | null
+          created_at?: string | null
+          credit_cost?: number | null
+          deleted_at?: string | null
+          error_code?: string | null
+          expires_at?: string | null
+          id?: string | null
+          product_id?: string | null
+          provider_job_id?: string | null
+          provider_request_id?: string | null
+          sanitized_error_message?: string | null
+          status?: Database["public"]["Enums"]["try_on_session_status"] | null
+          upload_validated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "try_on_sessions_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "try_on_sessions_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "public_catalog_products"
+            referencedColumns: ["brand_id"]
+          },
+          {
+            foreignKeyName: "try_on_sessions_brand_product_fkey"
+            columns: ["brand_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["brand_id", "id"]
+          },
+        ]
+      }
       public_catalog_products: {
         Row: {
           brand_id: string | null
@@ -263,6 +447,20 @@ export type Database = {
       }
     }
     Functions: {
+      consume_reserved_brand_credits: {
+        Args: { p_session_id: string }
+        Returns: {
+          available_credits: number
+          brand_id: string
+          consumed_credits: number
+          credit_cost: number
+          granted_credits: number
+          reserved_credits: number
+          session_id: string
+          status: Database["public"]["Enums"]["try_on_session_status"]
+          was_created: boolean
+        }[]
+      }
       create_brand_with_owner: {
         Args: { p_name: string; p_slug: string }
         Returns: string
@@ -299,14 +497,51 @@ export type Database = {
           was_created: boolean
         }[]
       }
+      is_valid_customer_upload_path: {
+        Args: { object_path: string }
+        Returns: boolean
+      }
       is_valid_product_image_path: {
         Args: { object_path: string }
         Returns: boolean
+      }
+      is_valid_try_on_result_path: {
+        Args: { object_path: string }
+        Returns: boolean
+      }
+      queue_try_on_session: {
+        Args: { p_session_id: string }
+        Returns: {
+          available_credits: number
+          brand_id: string
+          consumed_credits: number
+          credit_cost: number
+          granted_credits: number
+          reserved_credits: number
+          session_id: string
+          status: Database["public"]["Enums"]["try_on_session_status"]
+          was_created: boolean
+        }[]
+      }
+      release_reserved_brand_credits: {
+        Args: { p_session_id: string }
+        Returns: {
+          available_credits: number
+          brand_id: string
+          consumed_credits: number
+          credit_cost: number
+          granted_credits: number
+          reserved_credits: number
+          session_id: string
+          status: Database["public"]["Enums"]["try_on_session_status"]
+          was_created: boolean
+        }[]
       }
       storage_product_images_brand_id: {
         Args: { object_path: string }
         Returns: string
       }
+      try_on_v1_credit_cost: { Args: never; Returns: number }
       user_has_brand_role: {
         Args: {
           p_brand_id: string
@@ -318,6 +553,13 @@ export type Database = {
     Enums: {
       brand_role: "owner" | "admin" | "editor" | "analyst"
       credit_transaction_type: "grant" | "reserve" | "consume" | "release"
+      try_on_session_status:
+        | "pending_upload"
+        | "queued"
+        | "processing"
+        | "completed"
+        | "failed"
+        | "cancelled"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -447,6 +689,14 @@ export const Constants = {
     Enums: {
       brand_role: ["owner", "admin", "editor", "analyst"],
       credit_transaction_type: ["grant", "reserve", "consume", "release"],
+      try_on_session_status: [
+        "pending_upload",
+        "queued",
+        "processing",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
     },
   },
 } as const
