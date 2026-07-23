@@ -16,8 +16,8 @@ import type { UserContext } from "@/lib/auth/get-user-context";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Overview", disabled: false },
-  { href: "#", label: "Products", disabled: true, note: "Phase 4" },
+  { href: "/dashboard", label: "Overview" },
+  { href: "/dashboard/products", label: "Products" },
 ] as const;
 
 function formatRole(role: string | null): string {
@@ -40,32 +40,27 @@ function initials(name: string | null, email: string | null): string {
 function SidebarNav({ pathname }: { pathname: string }) {
   return (
     <nav className="flex flex-col gap-1" aria-label="Dashboard">
-      {NAV_ITEMS.map((item) =>
-        item.disabled ? (
-          <span
-            key={item.label}
-            className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground"
-            aria-disabled="true"
-          >
-            {item.label}
-            <span className="text-xs uppercase tracking-wide">{item.note}</span>
-          </span>
-        ) : (
+      {NAV_ITEMS.map((item) => {
+        const isActive =
+          pathname === item.href ||
+          (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`));
+
+        return (
           <Link
             key={item.href}
             href={item.href}
             className={cn(
               "rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              pathname === item.href
+              isActive
                 ? "bg-accent/15 text-accent-700"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
-            aria-current={pathname === item.href ? "page" : undefined}
+            aria-current={isActive ? "page" : undefined}
           >
             {item.label}
           </Link>
-        ),
-      )}
+        );
+      })}
     </nav>
   );
 }

@@ -21,7 +21,7 @@ export default async function DashboardPage() {
       <section className="space-y-2">
         <h1 className="font-heading text-3xl text-foreground">Welcome back, {displayName}</h1>
         <p className="max-w-2xl text-muted-foreground">
-          Your Dekhlo merchant workspace is ready. Product catalog and uploads arrive in Phase 4.
+          Manage your brand workspace, catalog, and merchant settings from here.
         </p>
       </section>
 
@@ -74,10 +74,10 @@ export default async function DashboardPage() {
       </div>
 
       <Alert>
-        <AlertTitle>Phase 4 is next</AlertTitle>
+        <AlertTitle>Catalog</AlertTitle>
         <AlertDescription>
-          Product management, storage buckets, and merchant catalog features are intentionally not
-          included in this release. Your dashboard will expand once those migrations land.
+          Product management is available from the Products section. Public try-on routes and session
+          persistence arrive in later phases.
         </AlertDescription>
       </Alert>
     </div>

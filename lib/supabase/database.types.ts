@@ -75,6 +75,53 @@ export type Database = {
         }
         Relationships: []
       }
+      products: {
+        Row: {
+          brand_id: string
+          category: string | null
+          created_at: string
+          id: string
+          is_active: boolean
+          metadata: Json
+          name: string
+          product_image_path: string
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          brand_id: string
+          category?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          name: string
+          product_image_path: string
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          brand_id?: string
+          category?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          name?: string
+          product_image_path?: string
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "products_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_path: string | null
@@ -106,6 +153,14 @@ export type Database = {
     Functions: {
       create_brand_with_owner: {
         Args: { p_name: string; p_slug: string }
+        Returns: string
+      }
+      is_valid_product_image_path: {
+        Args: { object_path: string }
+        Returns: boolean
+      }
+      storage_product_images_brand_id: {
+        Args: { object_path: string }
         Returns: string
       }
       user_has_brand_role: {
