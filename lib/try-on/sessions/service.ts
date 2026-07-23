@@ -1,9 +1,14 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { Database } from "@/lib/supabase/database.types";
+import type { TryOnSessionRow } from "@/lib/try-on/sessions/public-session";
+export type { TryOnSessionRow } from "@/lib/try-on/sessions/public-session";
+export { toPublicSessionStatus } from "@/lib/try-on/sessions/public-session";
 
-export type TryOnSessionRow = Database["public"]["Tables"]["try_on_sessions"]["Row"];
+export async function deletePendingUploadSession(sessionId: string): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase.from("try_on_sessions").delete().eq("id", sessionId).eq("status", "pending_upload");
+}
 
 export async function getSessionById(sessionId: string): Promise<TryOnSessionRow | null> {
   const supabase = createAdminClient();
@@ -143,15 +148,4 @@ export function isSessionExpired(session: TryOnSessionRow): boolean {
 
 export function isSessionDeleted(session: TryOnSessionRow): boolean {
   return session.deleted_at != null;
-}
-
-export function toPublicSessionStatus(session: TryOnSessionRow) {
-  return {
-    sessionId: session.id,
-    status: session.status,
-    errorCode: session.error_code,
-    sanitizedErrorMessage: session.sanitized_error_message,
-    expiresAt: session.expires_at,
-    completedAt: session.completed_at,
-  };
 }

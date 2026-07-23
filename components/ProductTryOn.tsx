@@ -1,16 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Uploader } from "@/components/Uploader";
+import {
+  shouldMintNewClientRequestId,
+  shouldResetAttemptOnPhotoChange,
+  type ProductTryOnPhase,
+} from "@/lib/try-on/sessions/session-upload-eligibility";
+import type { Database } from "@/lib/supabase/database.types";
 
-type Phase =
-  | "idle"
-  | "creating"
-  | "uploading"
-  | "validating"
-  | "generating"
-  | "done"
-  | "error";
+type TryOnSessionStatus = Database["public"]["Enums"]["try_on_session_status"];
 
 type ProductTryOnProps = {
   brandSlug: string;
@@ -19,25 +18,78 @@ type ProductTryOnProps = {
   productImageUrl: string;
 };
 
+type AttemptState = {
+  clientRequestId: string;
+  sessionId: string | null;
+  sessionStatus: TryOnSessionStatus | null;
+};
+
+function createAttemptState(): AttemptState {
+  return {
+    clientRequestId: crypto.randomUUID(),
+    sessionId: null,
+    sessionStatus: null,
+  };
+}
+
 export function ProductTryOn({
   brandSlug,
   productSlug,
   productName,
   productImageUrl,
 }: ProductTryOnProps) {
+  const attemptRef = useRef<AttemptState>(createAttemptState());
   const [personFile, setPersonFile] = useState<File | null>(null);
   const [consentToStore, setConsentToStore] = useState(false);
-  const [phase, setPhase] = useState<Phase>("idle");
+  const [phase, setPhase] = useState<ProductTryOnPhase>("idle");
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const clientRequestId = useMemo(() => crypto.randomUUID(), []);
 
-  const canStart = !!personFile && phase !== "creating" && phase !== "uploading" && phase !== "validating" && phase !== "generating";
+  const resetAttemptState = useCallback(() => {
+    attemptRef.current = createAttemptState();
+    setResultUrl(null);
+    setError(null);
+    setPhase("idle");
+  }, []);
+
+  const handlePersonFileChange = useCallback(
+    (file: File | null) => {
+      if (
+        shouldResetAttemptOnPhotoChange({
+          phase,
+          sessionStatus: attemptRef.current.sessionStatus,
+        })
+      ) {
+        resetAttemptState();
+      }
+
+      setPersonFile(file);
+    },
+    [phase, resetAttemptState],
+  );
+
+  const canStart =
+    !!personFile &&
+    phase !== "creating" &&
+    phase !== "uploading" &&
+    phase !== "validating" &&
+    phase !== "generating";
 
   async function startTryOn() {
     if (!personFile) {
       return;
     }
+
+    if (
+      shouldMintNewClientRequestId({
+        phase,
+        sessionStatus: attemptRef.current.sessionStatus,
+      })
+    ) {
+      resetAttemptState();
+    }
+
+    const { clientRequestId } = attemptRef.current;
 
     setPhase("creating");
     setError(null);
@@ -61,13 +113,18 @@ export function ProductTryOn({
         throw new Error(createPayload?.error ?? "Unable to start try-on.");
       }
 
+      attemptRef.current = {
+        ...attemptRef.current,
+        sessionId: createPayload.sessionId,
+        sessionStatus: createPayload.status ?? "pending_upload",
+      };
+
       setPhase("uploading");
 
       const uploadResponse = await fetch(createPayload.uploadUrl, {
         method: "PUT",
         headers: {
           "Content-Type": personFile.type,
-          "x-upsert": "true",
         },
         body: personFile,
       });
@@ -85,6 +142,10 @@ export function ProductTryOn({
       const validatePayload = await validateResponse.json().catch(() => null);
 
       if (validateResponse.status === 402) {
+        attemptRef.current = {
+          ...attemptRef.current,
+          sessionStatus: "failed",
+        };
         throw new Error(
           validatePayload?.sanitizedErrorMessage ??
             "This brand does not have enough credits for try-on right now.",
@@ -92,8 +153,17 @@ export function ProductTryOn({
       }
 
       if (!validateResponse.ok) {
+        attemptRef.current = {
+          ...attemptRef.current,
+          sessionStatus: validatePayload?.status ?? "failed",
+        };
         throw new Error(validatePayload?.error ?? "Upload validation failed.");
       }
+
+      attemptRef.current = {
+        ...attemptRef.current,
+        sessionStatus: validatePayload?.status ?? "queued",
+      };
 
       setPhase("generating");
 
@@ -104,6 +174,10 @@ export function ProductTryOn({
       const generatePayload = await generateResponse.json().catch(() => null);
 
       if (!generateResponse.ok) {
+        attemptRef.current = {
+          ...attemptRef.current,
+          sessionStatus: generatePayload?.status ?? "failed",
+        };
         throw new Error(generatePayload?.error ?? "Try-on generation failed.");
       }
 
@@ -111,6 +185,10 @@ export function ProductTryOn({
         throw new Error("Try-on completed without a result.");
       }
 
+      attemptRef.current = {
+        ...attemptRef.current,
+        sessionStatus: generatePayload?.status ?? "completed",
+      };
       setResultUrl(generatePayload.resultUrl);
       setPhase("done");
     } catch (err) {
@@ -119,7 +197,15 @@ export function ProductTryOn({
     }
   }
 
-  const busy = phase === "creating" || phase === "uploading" || phase === "validating" || phase === "generating";
+  function handleTryAnother() {
+    resetAttemptState();
+  }
+
+  const busy =
+    phase === "creating" ||
+    phase === "uploading" ||
+    phase === "validating" ||
+    phase === "generating";
 
   return (
     <div className="space-y-8">
@@ -147,7 +233,7 @@ export function ProductTryOn({
             placeholder="Drop your photo, or click to browse"
             borderColor="var(--color-accent-400)"
             washed
-            onChange={setPersonFile}
+            onChange={handlePersonFileChange}
           />
 
           <label className="flex items-start gap-3 rounded-xl border border-border/70 bg-surface/60 p-4 text-sm text-muted-foreground">
@@ -169,7 +255,7 @@ export function ProductTryOn({
             disabled={!canStart}
             onClick={startTryOn}
           >
-            {busy ? "Working on your try-on…" : "Try this product on"}
+            {busy ? "Working on your try-on…" : phase === "done" ? "Try another photo" : "Try this product on"}
           </button>
 
           {phase === "error" && error ? (
@@ -201,9 +287,14 @@ export function ProductTryOn({
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={resultUrl} alt="Try-on result" className="w-full max-w-md object-cover" />
               </div>
-              <a className="btn btn-secondary inline-flex" href={resultUrl} download="dekhlo-try-on.png">
-                Download result
-              </a>
+              <div className="flex flex-wrap gap-3">
+                <a className="btn btn-secondary inline-flex" href={resultUrl} download="dekhlo-try-on.png">
+                  Download result
+                </a>
+                <button type="button" className="btn btn-secondary" onClick={handleTryAnother}>
+                  Try another photo
+                </button>
+              </div>
             </div>
           ) : null}
         </section>

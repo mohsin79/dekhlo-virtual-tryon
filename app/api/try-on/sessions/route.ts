@@ -1,6 +1,5 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   assertJsonRequest,
@@ -11,13 +10,14 @@ import {
 } from "@/lib/api/security";
 import { getPublicProductBySlugs } from "@/lib/catalog/get-public-product";
 import { getClientIp, limitSessionCreation } from "@/lib/rate-limit";
+import { createTryOnSession } from "@/lib/try-on/sessions/create-session";
 import { computeInitialSessionExpiry } from "@/lib/try-on/sessions/retention";
 import {
+  deletePendingUploadSession,
   getSessionByClientRequestId,
   insertTryOnSession,
-  toPublicSessionStatus,
 } from "@/lib/try-on/sessions/service";
-import { createPersonUploadUrl } from "@/lib/try-on/sessions/storage";
+import { createPersonUploadUrl, removePersonPhoto } from "@/lib/try-on/sessions/storage";
 import { buildPersonStoragePath } from "@/lib/try-on/sessions/paths";
 import {
   generateSessionAccessToken,
@@ -64,81 +64,35 @@ export async function POST(request: Request) {
       return rateLimitedResponse();
     }
   } catch {
-    return rateLimitedResponse();
+    return genericErrorResponse("Service temporarily unavailable.", 503);
   }
 
-  const product = await getPublicProductBySlugs(parsed.data.brandSlug, parsed.data.productSlug);
+  const result = await createTryOnSession(parsed.data, {
+    getProduct: async (brandSlug, productSlug) => {
+      const product = await getPublicProductBySlugs(brandSlug, productSlug);
 
-  if (!product) {
-    return genericErrorResponse("Product not found.", 404);
-  }
+      if (!product) {
+        return null;
+      }
 
-  const existing = await getSessionByClientRequestId(parsed.data.clientRequestId);
-
-  if (existing) {
-    const token = await readSessionAccessToken(existing.id);
-
-    if (!token || !tokensMatch(existing.anonymous_token_hash, token)) {
-      return genericErrorResponse("Session request conflict.", 409);
-    }
-
-    const uploadPath = existing.person_storage_path;
-
-    if (!uploadPath) {
-      return genericErrorResponse("Session is unavailable.", 409);
-    }
-
-    const signedUpload = await createPersonUploadUrl(uploadPath);
-
-    if (!signedUpload) {
-      return genericErrorResponse("Unable to prepare upload.", 503);
-    }
-
-    return jsonNoStore({
-      ...toPublicSessionStatus(existing),
-      uploadUrl: signedUpload.signedUrl,
-      uploadToken: signedUpload.token,
-    });
-  }
-
-  const sessionId = randomUUID();
-  const access = generateSessionAccessToken();
-  const expiresAt = computeInitialSessionExpiry();
-  const personStoragePath = buildPersonStoragePath(
-    product.brandId,
-    sessionId,
-    "jpg",
-  );
-
-  const session = await insertTryOnSession({
-    id: sessionId,
-    brandId: product.brandId,
-    productId: product.productId,
-    clientRequestId: parsed.data.clientRequestId,
-    anonymousTokenHash: access.hash,
-    personStoragePath,
-    consentToStore: parsed.data.consentToStore,
-    expiresAt: expiresAt.toISOString(),
+      return { brandId: product.brandId, productId: product.productId };
+    },
+    getSessionByClientRequestId,
+    readSessionAccessToken,
+    tokensMatch,
+    createPersonUploadUrl,
+    insertTryOnSession,
+    deletePendingUploadSession,
+    removePersonPhoto,
+    setSessionAccessCookie,
+    generateSessionAccessToken,
+    buildPersonStoragePath,
+    computeInitialSessionExpiry,
   });
 
-  if (!session) {
-    return genericErrorResponse("Unable to create session.", 503);
+  if ("error" in result) {
+    return genericErrorResponse(result.error, result.status);
   }
 
-  await setSessionAccessCookie(sessionId, access.token, expiresAt);
-
-  const signedUpload = await createPersonUploadUrl(personStoragePath);
-
-  if (!signedUpload) {
-    return genericErrorResponse("Unable to prepare upload.", 503);
-  }
-
-  return jsonNoStore(
-    {
-      ...toPublicSessionStatus(session),
-      uploadUrl: signedUpload.signedUrl,
-      uploadToken: signedUpload.token,
-    },
-    { status: 201 },
-  );
+  return jsonNoStore(result.body, { status: result.status });
 }
