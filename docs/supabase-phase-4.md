@@ -33,6 +33,7 @@ On Windows, use Node to avoid PowerShell redirect encoding issues (see Phase 2 d
 | `20260723100100_phase4_products_rls_grants.sql` | Table grants and RLS policies |
 | `20260723100200_phase4_product_images_storage.sql` | `product-images` bucket, path helpers, Storage RLS |
 | `20260723110000_phase4_public_catalog_read.sql` | Public active-product read policy, catalog view, slug RPC |
+| `20260723120000_phase4_authenticated_public_products_hardening.sql` | Restrict public table access to anon; harden view and RPC |
 
 Do **not** edit Phase 2 or Phase 3 migration files.
 
@@ -63,20 +64,24 @@ No price, SKU, stock, variants, or analytics columns.
 
 Per `docs/saas-architecture.md` §4.4 and Phase 4 scope:
 
-- **Authenticated brand members** (owner, admin, editor, analyst) can `SELECT` all products for brands they belong to, including inactive products.
-- **Anonymous users and unrelated authenticated users** may read **only active products** (`is_active = true`) through the public catalog read foundation.
+- **Anonymous users** may read **only active products** through safe column grants on `public.products`, plus the hardened public catalog view and slug RPC.
+- **Authenticated brand members** use membership-scoped `SELECT` on `public.products` and can read all architecture-approved columns, including inactive products and `metadata`.
+- **Unrelated authenticated users** receive **zero rows** from `public.products` and must use `get_public_product_by_slugs()` or `public_catalog_products` for public catalog access.
 - **Inactive products** remain merchant-only for non-members.
-- **`/try/[brandSlug]/[productSlug]` UI and try-on sessions** remain **Phase 6**. Phase 4 provides the database/public-read foundation only.
+- **`/try/[brandSlug]/[productSlug]` UI and try-on sessions** remain **Phase 6**. Phase 4 provides the database/public-read foundation only. Public routes must **never** query `public.products` directly.
 
 ### Public read surfaces
 
-Phase 4 exposes three complementary surfaces (publishable client + RLS, no secret key):
+Phase 4 exposes controlled public surfaces (publishable client, no secret key):
 
-| Surface | Purpose |
-|---------|---------|
-| `products_select_public_active` | Table-level SELECT for active rows (`anon`, `authenticated`) |
-| `public.public_catalog_products` | Safe-column view joining active products with public brand fields |
-| `public.get_public_product_by_slugs(text, text)` | Slug lookup for future try-on route resolution |
+| Surface | Audience | Purpose |
+|---------|----------|---------|
+| `products_select_public_active` | `anon` only | Base-table SELECT for active rows on safe columns |
+| `products_select_members` | authenticated members | Membership-scoped full product access |
+| `public.public_catalog_products` | `anon`, `authenticated` | Hardened definer view — active products, safe fields only |
+| `public.get_public_product_by_slugs(text, text)` | `anon`, `authenticated` | Slug lookup for future try-on route resolution |
+
+The view is retained as an optional browse surface (no V1 product picker yet). It uses `security_barrier = true` and `security_invoker = false`, so the view definition itself is the authorization boundary and does not rely on caller RLS for underlying tables.
 
 The `product-images` bucket is **public** so rendered catalog images can use `getPublicUrl()` at display time.
 
@@ -102,22 +107,22 @@ The `product-images` bucket is **public** so rendered catalog images can use `ge
 - product `metadata`
 - private storage paths outside approved public catalog fields
 
-Unrelated authenticated users can still read `metadata` on active products via the full authenticated table grant if they query `public.products` directly. Phase 6 public try-on UI should use `public_catalog_products` or `get_public_product_by_slugs()` rather than ad-hoc table selects.
+Public routes and unrelated signed-in users must use the view or RPC — not direct `public.products` queries.
 
 ## Product role matrix
 
-| Role | SELECT | INSERT | UPDATE | DELETE | Activate/deactivate |
-|------|--------|--------|--------|--------|---------------------|
-| owner | yes | yes | yes | yes | yes |
-| admin | yes | yes | yes | yes | yes |
-| editor | yes | yes | yes | yes | yes |
-| analyst | yes | no | no | no | no |
-| unrelated authenticated | active only | no | no | no | no |
-| anon | active only | no | no | no | no |
+| Role | `public.products` | Public view/RPC | INSERT | UPDATE | DELETE | Activate/deactivate |
+|------|-------------------|-----------------|:------:|:------:|:------:|:-------------------:|
+| owner | all own-brand rows | active catalog | yes | yes | yes | yes |
+| admin | all own-brand rows | active catalog | yes | yes | yes | yes |
+| editor | all own-brand rows | active catalog | yes | yes | yes | yes |
+| analyst | all own-brand rows (read-only) | active catalog | no | no | no | no |
+| unrelated authenticated | **zero rows** | active catalog only | no | no | no | no |
+| anon | active rows, safe columns only | active catalog only | no | no | no | no |
 
 Authorization uses `public.user_has_brand_role()` with `auth.uid()` only. No role from form data or Auth metadata.
 
-Public catalog reads use RLS policy `products_select_public_active` plus the safe view/RPC surfaces above. No anonymous INSERT, UPDATE, or DELETE grants exist.
+No anonymous or unrelated authenticated write grants exist on `public.products`.
 
 ## Product RLS policies
 
@@ -126,22 +131,22 @@ Five separate policies (no `FOR ALL`):
 | Command | Policy | Rule |
 |---------|--------|------|
 | SELECT | `products_select_members` | owner, admin, editor, or analyst on `brand_id` |
-| SELECT | `products_select_public_active` | `anon`, `authenticated`; `is_active = true` |
+| SELECT | `products_select_public_active` | `anon` only; `is_active = true` |
 | INSERT | `products_insert_editors` | owner, admin, or editor; `WITH CHECK` on `brand_id` |
 | UPDATE | `products_update_editors` | owner, admin, or editor; `USING` + `WITH CHECK` on `brand_id` |
 | DELETE | `products_delete_editors` | owner, admin, or editor on `brand_id` |
 
-Merchant members reading inactive products use `products_select_members`. Public callers only receive active rows.
+Merchant members reading inactive products use `products_select_members`. Unrelated authenticated users receive zero base-table rows and must use the public view or RPC.
 
 ## Table grants
 
 | Role | Privileges |
 |------|------------|
-| `anon` | `SELECT` on safe product columns only; `SELECT` on `public_catalog_products`; `EXECUTE` on `get_public_product_by_slugs` |
-| `authenticated` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on `products`; public catalog view/RPC access |
-| `service_role` | `ALL` (trusted infrastructure only; app does not use for merchant CRUD) |
+| `anon` | Safe-column `SELECT` on active `products`; `SELECT` on `public_catalog_products`; `EXECUTE` on `get_public_product_by_slugs` |
+| `authenticated` | Full membership-scoped `SELECT`/`INSERT`/`UPDATE`/`DELETE` on `products` via RLS; public view/RPC for catalog reads outside membership |
+| `service_role` | `ALL` on `products` (trusted infrastructure only; app does not use for merchant or public CRUD) |
 
-No anonymous write grants on `public.products`.
+No anonymous write grants. `public_catalog_products` and `get_public_product_by_slugs` are granted only to `anon` and `authenticated`.
 
 ## `product-images` Storage bucket
 
@@ -264,11 +269,11 @@ Server Actions in `app/dashboard/products/actions.ts`:
 | File | Assertions |
 |------|------------|
 | `005_products_schema.test.sql` | 21 |
-| `006_products_rls.test.sql` | 11 |
+| `006_products_rls.test.sql` | 12 |
 | `007_product_images_storage.test.sql` | 13 |
-| `008_public_catalog_read.test.sql` | 16 |
+| `008_public_catalog_read.test.sql` | 24 |
 
-**Total Phase 4:** 61 assertions. Full suite: 153 tests.
+**Total Phase 4:** 70 assertions. Full suite: 162 tests.
 
 ## Remote deployment
 

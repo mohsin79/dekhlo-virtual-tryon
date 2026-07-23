@@ -3,7 +3,7 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET search_path TO extensions, public, auth;
 
-SELECT plan(11);
+SELECT plan(12);
 
 SELECT tests.create_auth_user('11111111-1111-1111-1111-111111111111'::uuid, 'owner-a@test.local', 'Owner A');
 SELECT tests.create_auth_user('22222222-2222-2222-2222-222222222222'::uuid, 'admin-a@test.local', 'Admin A');
@@ -92,14 +92,20 @@ SET LOCAL role authenticated;
 
 SELECT is(
   (SELECT count(*)::bigint FROM public.products WHERE slug = 'product-a'),
-  1::bigint,
-  'unrelated user can read active public products'
+  0::bigint,
+  'unrelated user receives zero rows from public.products'
 );
 
 SELECT is(
   (SELECT count(*)::bigint FROM public.products WHERE slug = 'product-inactive'),
   0::bigint,
-  'unrelated user cannot read inactive products'
+  'unrelated user cannot read inactive products directly'
+);
+
+SELECT is(
+  (SELECT product_name FROM public.get_public_product_by_slugs('brand-a', 'product-a')),
+  'Product A',
+  'unrelated user can resolve active product through safe RPC'
 );
 
 SELECT throws_ok(
