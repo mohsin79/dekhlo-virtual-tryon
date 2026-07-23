@@ -32,6 +32,7 @@ On Windows, use Node to avoid PowerShell redirect encoding issues (see Phase 2 d
 | `20260723100000_phase4_products_schema.sql` | `public.products` table, indexes, triggers |
 | `20260723100100_phase4_products_rls_grants.sql` | Table grants and RLS policies |
 | `20260723100200_phase4_product_images_storage.sql` | `product-images` bucket, path helpers, Storage RLS |
+| `20260723110000_phase4_public_catalog_read.sql` | Public active-product read policy, catalog view, slug RPC |
 
 Do **not** edit Phase 2 or Phase 3 migration files.
 
@@ -60,13 +61,48 @@ No price, SKU, stock, variants, or analytics columns.
 
 ## Product visibility model
 
-Per `docs/saas-architecture.md` §4.4:
+Per `docs/saas-architecture.md` §4.4 and Phase 4 scope:
 
-- **Authenticated brand members** (owner, admin, editor, analyst) can `SELECT` products for brands they belong to.
-- **Anonymous users** have **no** `SELECT` grant or RLS policy on `public.products`. Public try-on database access is deferred to **Phase 6**.
-- **`is_active`** controls merchant catalog visibility and future public try-on eligibility. Inactive products are not exposed through anonymous database access in Phase 4 because no anonymous product policy exists yet.
+- **Authenticated brand members** (owner, admin, editor, analyst) can `SELECT` all products for brands they belong to, including inactive products.
+- **Anonymous users and unrelated authenticated users** may read **only active products** (`is_active = true`) through the public catalog read foundation.
+- **Inactive products** remain merchant-only for non-members.
+- **`/try/[brandSlug]/[productSlug]` UI and try-on sessions** remain **Phase 6**. Phase 4 provides the database/public-read foundation only.
 
-The `product-images` bucket is **public** so rendered catalog images can use `getPublicUrl()` at display time. Public object URLs do **not** imply anonymous listing of product rows.
+### Public read surfaces
+
+Phase 4 exposes three complementary surfaces (publishable client + RLS, no secret key):
+
+| Surface | Purpose |
+|---------|---------|
+| `products_select_public_active` | Table-level SELECT for active rows (`anon`, `authenticated`) |
+| `public.public_catalog_products` | Safe-column view joining active products with public brand fields |
+| `public.get_public_product_by_slugs(text, text)` | Slug lookup for future try-on route resolution |
+
+The `product-images` bucket is **public** so rendered catalog images can use `getPublicUrl()` at display time.
+
+### Publicly exposed fields
+
+**Products (anon column grants + active-row policy):**
+
+- `id`, `brand_id`, `name`, `slug`, `product_image_path`, `category`, `is_active`
+
+**Not exposed to `anon` on `public.products`:**
+
+- `metadata` (merchant extension point — may contain internal data)
+- `created_at`, `updated_at`
+
+**View / RPC brand fields:**
+
+- `brand_id`, `brand_name`, `brand_slug`, `logo_path`, `widget_config`
+
+**Not exposed publicly:**
+
+- `brands.plan`
+- membership, profile, credit, or session data
+- product `metadata`
+- private storage paths outside approved public catalog fields
+
+Unrelated authenticated users can still read `metadata` on active products via the full authenticated table grant if they query `public.products` directly. Phase 6 public try-on UI should use `public_catalog_products` or `get_public_product_by_slugs()` rather than ad-hoc table selects.
 
 ## Product role matrix
 
@@ -76,29 +112,36 @@ The `product-images` bucket is **public** so rendered catalog images can use `ge
 | admin | yes | yes | yes | yes | yes |
 | editor | yes | yes | yes | yes | yes |
 | analyst | yes | no | no | no | no |
-| unrelated authenticated | no | no | no | no | no |
-| anon | no | no | no | no | no |
+| unrelated authenticated | active only | no | no | no | no |
+| anon | active only | no | no | no | no |
 
 Authorization uses `public.user_has_brand_role()` with `auth.uid()` only. No role from form data or Auth metadata.
 
+Public catalog reads use RLS policy `products_select_public_active` plus the safe view/RPC surfaces above. No anonymous INSERT, UPDATE, or DELETE grants exist.
+
 ## Product RLS policies
 
-Four separate policies (no `FOR ALL`):
+Five separate policies (no `FOR ALL`):
 
 | Command | Policy | Rule |
 |---------|--------|------|
 | SELECT | `products_select_members` | owner, admin, editor, or analyst on `brand_id` |
+| SELECT | `products_select_public_active` | `anon`, `authenticated`; `is_active = true` |
 | INSERT | `products_insert_editors` | owner, admin, or editor; `WITH CHECK` on `brand_id` |
 | UPDATE | `products_update_editors` | owner, admin, or editor; `USING` + `WITH CHECK` on `brand_id` |
 | DELETE | `products_delete_editors` | owner, admin, or editor on `brand_id` |
+
+Merchant members reading inactive products use `products_select_members`. Public callers only receive active rows.
 
 ## Table grants
 
 | Role | Privileges |
 |------|------------|
-| `anon` | none |
-| `authenticated` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
+| `anon` | `SELECT` on safe product columns only; `SELECT` on `public_catalog_products`; `EXECUTE` on `get_public_product_by_slugs` |
+| `authenticated` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on `products`; public catalog view/RPC access |
 | `service_role` | `ALL` (trusted infrastructure only; app does not use for merchant CRUD) |
+
+No anonymous write grants on `public.products`.
 
 ## `product-images` Storage bucket
 
@@ -221,10 +264,11 @@ Server Actions in `app/dashboard/products/actions.ts`:
 | File | Assertions |
 |------|------------|
 | `005_products_schema.test.sql` | 21 |
-| `006_products_rls.test.sql` | 9 |
+| `006_products_rls.test.sql` | 11 |
 | `007_product_images_storage.test.sql` | 13 |
+| `008_public_catalog_read.test.sql` | 16 |
 
-**Total Phase 4:** 43 assertions. Full suite: 135 tests.
+**Total Phase 4:** 61 assertions. Full suite: 153 tests.
 
 ## Remote deployment
 
@@ -278,7 +322,7 @@ Do **not** run `db reset` against the linked project.
 | Phase | Feature |
 |-------|---------|
 | 5 | Credits, reservations, billing |
-| 6 | `try_on_sessions`, customer uploads, try-on results, public `/try/[brandSlug]/[productSlug]`, anonymous product SELECT for active products |
+| 6 | `try_on_sessions`, customer uploads, try-on results, public `/try/[brandSlug]/[productSlug]` page UI, session API |
 | — | Homepage move to `/demo`, analytics, Inngest, Resend, team invitations |
 
 ## Manual verification checklist

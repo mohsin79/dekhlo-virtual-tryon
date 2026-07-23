@@ -71,8 +71,8 @@ SELECT is(
       AND tablename = 'products'
       AND policyname LIKE 'products_%'
   ),
-  4::bigint,
-  'products has four separate policies'
+  5::bigint,
+  'products has five separate policies'
 );
 
 SELECT is(

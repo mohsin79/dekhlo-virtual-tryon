@@ -34,6 +34,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "brand_members_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "public_catalog_products"
+            referencedColumns: ["brand_id"]
+          },
+          {
             foreignKeyName: "brand_members_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
@@ -120,6 +127,13 @@ export type Database = {
             referencedRelation: "brands"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "products_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "public_catalog_products"
+            referencedColumns: ["brand_id"]
+          },
         ]
       }
       profiles: {
@@ -148,12 +162,41 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      public_catalog_products: {
+        Row: {
+          brand_id: string | null
+          brand_name: string | null
+          brand_slug: string | null
+          category: string | null
+          logo_path: string | null
+          product_id: string | null
+          product_image_path: string | null
+          product_name: string | null
+          product_slug: string | null
+          widget_config: Json | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       create_brand_with_owner: {
         Args: { p_name: string; p_slug: string }
         Returns: string
+      }
+      get_public_product_by_slugs: {
+        Args: { p_brand_slug: string; p_product_slug: string }
+        Returns: {
+          brand_id: string
+          brand_name: string
+          brand_slug: string
+          category: string
+          logo_path: string
+          product_id: string
+          product_image_path: string
+          product_name: string
+          product_slug: string
+          widget_config: Json
+        }[]
       }
       is_valid_product_image_path: {
         Args: { object_path: string }

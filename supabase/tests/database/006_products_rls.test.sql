@@ -3,7 +3,7 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET search_path TO extensions, public, auth;
 
-SELECT plan(9);
+SELECT plan(11);
 
 SELECT tests.create_auth_user('11111111-1111-1111-1111-111111111111'::uuid, 'owner-a@test.local', 'Owner A');
 SELECT tests.create_auth_user('22222222-2222-2222-2222-222222222222'::uuid, 'admin-a@test.local', 'Admin A');
@@ -37,14 +37,24 @@ INSERT INTO public.products (
   brand_id,
   name,
   slug,
-  product_image_path
+  product_image_path,
+  is_active
 )
 VALUES (
   'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid,
   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
   'Product A',
   'product-a',
-  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/cccccccc-cccc-cccc-cccc-cccccccccccc/11111111-1111-1111-1111-111111111111.jpg'
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/cccccccc-cccc-cccc-cccc-cccccccccccc/11111111-1111-1111-1111-111111111111.jpg',
+  true
+),
+(
+  'dddddddd-dddd-dddd-dddd-dddddddddddd'::uuid,
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
+  'Product Inactive',
+  'product-inactive',
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/dddddddd-dddd-dddd-dddd-dddddddddddd/11111111-1111-1111-1111-111111111111.jpg',
+  false
 );
 
 SELECT is(
@@ -82,8 +92,14 @@ SET LOCAL role authenticated;
 
 SELECT is(
   (SELECT count(*)::bigint FROM public.products WHERE slug = 'product-a'),
+  1::bigint,
+  'unrelated user can read active public products'
+);
+
+SELECT is(
+  (SELECT count(*)::bigint FROM public.products WHERE slug = 'product-inactive'),
   0::bigint,
-  'unrelated user cannot read private products'
+  'unrelated user cannot read inactive products'
 );
 
 SELECT throws_ok(
@@ -118,11 +134,16 @@ SELECT throws_ok(
 SELECT tests.clear_jwt_claims();
 SET LOCAL role anon;
 
-SELECT throws_ok(
-  $$ SELECT count(*)::bigint FROM public.products $$,
-  '42501',
-  NULL,
-  'anonymous users cannot read products directly'
+SELECT is(
+  (SELECT count(*)::bigint FROM public.products WHERE slug = 'product-a'),
+  1::bigint,
+  'anonymous users can read active products'
+);
+
+SELECT is(
+  (SELECT count(*)::bigint FROM public.products WHERE slug = 'product-inactive'),
+  0::bigint,
+  'anonymous users cannot read inactive products'
 );
 
 SELECT tests.set_jwt_claims('22222222-2222-2222-2222-222222222222'::uuid);
