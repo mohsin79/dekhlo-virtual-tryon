@@ -151,6 +151,48 @@ describe("preparePersonPhotoForUpload", () => {
     }
   });
 
+  it("rejects resized output larger than 8 MB", async () => {
+    const original = new File(["original"], "photo.png", { type: "image/png" });
+    const result = await preparePersonPhotoForUpload(original, {
+      ...createDeps({ width: 5000, height: 5000 }),
+      canvasToBlob: async (_canvas, mimeType) => new Blob([Buffer.alloc(8 * 1024 * 1024 + 1)], { type: mimeType }),
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.code, "FILE_TOO_LARGE");
+      assert.match(result.error.message, /JPEG or WebP/i);
+    }
+  });
+
+  it("rejects empty resized output", async () => {
+    const original = new File(["original"], "photo.jpg", { type: "image/jpeg" });
+    const result = await preparePersonPhotoForUpload(original, {
+      ...createDeps({ width: 5000, height: 5000 }),
+      canvasToBlob: async () => new Blob([], { type: "image/jpeg" }),
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.code, "RESIZE_FAILED");
+    }
+  });
+
+  it("keeps PNG output type for transparent PNG inputs", async () => {
+    const original = new File(["original"], "photo.png", { type: "image/png" });
+    const result = await preparePersonPhotoForUpload(
+      original,
+      createDeps({ width: 5000, height: 5000 }),
+    );
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.value.mimeType, "image/png");
+      assert.equal(result.value.file.type, "image/png");
+      assert.ok(result.value.file.size > 0);
+    }
+  });
+
   it("rejects unsupported mime types before decoding", async () => {
     const original = new File(["original"], "photo.heic", { type: "image/heic" });
     const result = await preparePersonPhotoForUpload(original, createDeps({ width: 1000, height: 1000 }));

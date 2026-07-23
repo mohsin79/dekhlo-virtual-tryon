@@ -7,6 +7,12 @@ import {
 
 export const PERSON_PHOTO_OUTPUT_QUALITY = 0.91;
 
+export const PERSON_PHOTO_OUTPUT_TOO_LARGE_MESSAGE =
+  "After optimization, this photo is still too large. Please use a JPEG or WebP image, or choose a smaller photo.";
+
+export const PERSON_PHOTO_OUTPUT_EMPTY_MESSAGE =
+  "This photo could not be prepared in your browser. Try another image.";
+
 export type ResizeDimensions = {
   width: number;
   height: number;
@@ -179,7 +185,7 @@ export async function preparePersonPhotoForUpload(
         ok: false,
         error: {
           code: "RESIZE_FAILED",
-          message: "This photo could not be prepared in your browser. Try another image.",
+          message: PERSON_PHOTO_OUTPUT_EMPTY_MESSAGE,
         },
       };
     }
@@ -191,12 +197,22 @@ export async function preparePersonPhotoForUpload(
       mimeType === "image/png" ? undefined : PERSON_PHOTO_OUTPUT_QUALITY,
     );
 
-    if (!blob) {
+    if (!blob || blob.size === 0) {
       return {
         ok: false,
         error: {
           code: "RESIZE_FAILED",
-          message: "This photo could not be prepared in your browser. Try another image.",
+          message: PERSON_PHOTO_OUTPUT_EMPTY_MESSAGE,
+        },
+      };
+    }
+
+    if (blob.type && blob.type !== mimeType) {
+      return {
+        ok: false,
+        error: {
+          code: "RESIZE_FAILED",
+          message: PERSON_PHOTO_OUTPUT_EMPTY_MESSAGE,
         },
       };
     }
@@ -206,7 +222,7 @@ export async function preparePersonPhotoForUpload(
         ok: false,
         error: {
           code: "FILE_TOO_LARGE",
-          message: "Image must be 8 MB or smaller.",
+          message: PERSON_PHOTO_OUTPUT_TOO_LARGE_MESSAGE,
         },
       };
     }
@@ -215,6 +231,26 @@ export async function preparePersonPhotoForUpload(
       type: mimeType,
       lastModified: Date.now(),
     });
+
+    if (outputFile.size === 0) {
+      return {
+        ok: false,
+        error: {
+          code: "RESIZE_FAILED",
+          message: PERSON_PHOTO_OUTPUT_EMPTY_MESSAGE,
+        },
+      };
+    }
+
+    if (target.width > MAX_IMAGE_DIMENSION || target.height > MAX_IMAGE_DIMENSION) {
+      return {
+        ok: false,
+        error: {
+          code: "RESIZE_FAILED",
+          message: PERSON_PHOTO_OUTPUT_EMPTY_MESSAGE,
+        },
+      };
+    }
 
     return {
       ok: true,
@@ -231,7 +267,7 @@ export async function preparePersonPhotoForUpload(
       ok: false,
       error: {
         code: "RESIZE_FAILED",
-        message: "This photo could not be prepared in your browser. Try another image.",
+        message: PERSON_PHOTO_OUTPUT_EMPTY_MESSAGE,
       },
     };
   } finally {
