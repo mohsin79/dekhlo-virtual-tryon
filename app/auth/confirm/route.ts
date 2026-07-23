@@ -1,5 +1,6 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { authErrorPath, type AuthErrorReason } from "@/lib/auth/auth-error-reason";
 import { resolvePostAuthRedirect } from "@/lib/auth/get-user-context";
 import { sanitizeRedirectPath } from "@/lib/auth/safe-redirect";
 import { getSiteUrl } from "@/lib/env";
@@ -18,6 +19,10 @@ function redirectTo(path: string): NextResponse {
   return NextResponse.redirect(new URL(path, getSiteUrl()));
 }
 
+function redirectToAuthError(reason: AuthErrorReason): NextResponse {
+  return redirectTo(authErrorPath(reason));
+}
+
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const tokenHash = requestUrl.searchParams.get("token_hash");
@@ -32,7 +37,7 @@ export async function GET(request: Request) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
 
     if (error) {
-      return redirectTo("/auth/error");
+      return redirectToAuthError("expired_or_used");
     }
 
     authenticated = true;
@@ -43,16 +48,16 @@ export async function GET(request: Request) {
     });
 
     if (error) {
-      return redirectTo("/auth/error");
+      return redirectToAuthError("expired_or_used");
     }
 
     authenticated = true;
   } else {
-    return redirectTo("/auth/error");
+    return redirectToAuthError("missing_callback");
   }
 
   if (!authenticated) {
-    return redirectTo("/auth/error");
+    return redirectToAuthError("confirmation_failed");
   }
 
   if (type === "recovery") {

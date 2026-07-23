@@ -87,6 +87,25 @@ Before production launch:
 - Supabase default / test email delivery is **not** a production email solution.
 - Local development can use Supabase Mailpit when running `supabase start`.
 
+## Confirmation link prefetching
+
+Default Supabase confirmation links can be consumed by **email-link prefetching** (security scanners, inbox clients, or link preview services). That can confirm the user in Supabase while a later manual click receives an expired or invalid token response and lands on `/auth/error`.
+
+The application handles this safely:
+
+- Callback failures redirect to `/auth/error` with an internal reason only (`expired_or_used`, `missing_callback`, or `confirmation_failed`).
+- The error page tells users the link may already have been used and that their email may already be confirmed, then directs them to **sign in** first.
+- The app does **not** assume confirmation status without an authenticated session.
+
+Before production:
+
+1. Configure **custom SMTP** for reliable delivery.
+2. For a more robust production flow, prefer either:
+   - an **email OTP** entered by the user on your site, or
+   - a **two-step confirmation page** where the email opens a non-consuming landing page and the user explicitly clicks a second confirmation button.
+
+A direct token-hash link alone does **not** prevent prefetching. Plan accordingly for production auth UX.
+
 ## Security reminders
 
 - Never commit real passwords, tokens, API keys, or service role secrets.
