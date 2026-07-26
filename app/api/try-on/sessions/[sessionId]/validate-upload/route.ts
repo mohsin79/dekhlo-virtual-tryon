@@ -16,6 +16,7 @@ import { downloadPersonPhoto, removePersonPhoto } from "@/lib/try-on/sessions/st
 import { validatePersonPhotoBuffer } from "@/lib/try-on/sessions/person-validation";
 import { mimeTypeToExtension } from "@/lib/try-on/sessions/constants";
 import { buildPersonStoragePath } from "@/lib/try-on/sessions/paths";
+import { dispatchTryOnGeneration } from "@/lib/try-on/sessions/dispatch-generation";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type RouteContext = {
@@ -128,9 +129,17 @@ export async function POST(_request: Request, context: RouteContext) {
 
   const row = queueResult.data?.[0];
 
-  return jsonNoStore({
+  await dispatchTryOnGeneration({
     sessionId,
-    status: row?.status ?? "queued",
-    expiresAt: session.expires_at,
+    brandId: session.brand_id,
   });
+
+  return jsonNoStore(
+    {
+      sessionId,
+      status: row?.status ?? "queued",
+      expiresAt: session.expires_at,
+    },
+    { status: 202 },
+  );
 }

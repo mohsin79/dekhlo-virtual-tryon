@@ -23,7 +23,7 @@ export type TryOnGenerationInput = {
 };
 
 export type TryOnGenerationResult =
-  | { ok: true; imageBase64: string }
+  | { ok: true; imageBase64: string; providerRequestId?: string }
   | { ok: false; message: string };
 
 export async function generateTryOnImage(
@@ -82,7 +82,7 @@ export async function generateTryOnImage(
       };
     }
 
-    return { ok: true, imageBase64: b64 };
+    return { ok: true, imageBase64: b64, providerRequestId: response.id };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Try-on failed.";
     return { ok: false, message };

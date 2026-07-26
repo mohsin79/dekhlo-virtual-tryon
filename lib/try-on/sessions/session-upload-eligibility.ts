@@ -14,7 +14,7 @@ export type ProductTryOnPhase =
   | "optimizing"
   | "uploading"
   | "validating"
-  | "generating"
+  | "polling"
   | "done"
   | "error";
 

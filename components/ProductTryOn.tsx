@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Uploader } from "@/components/Uploader";
 import {
   shouldMintNewClientRequestId,
@@ -12,9 +12,71 @@ import {
   validatePersonPhotoFileSize,
   validatePersonPhotoMimeType,
 } from "@/lib/try-on/sessions/person-photo-resize";
+import {
+  computeSessionPollDelayMs,
+  shouldContinueSessionPolling,
+} from "@/lib/try-on/sessions/session-polling";
 import type { Database } from "@/lib/supabase/database.types";
 
 type TryOnSessionStatus = Database["public"]["Enums"]["try_on_session_status"];
+
+type SessionPollPayload = {
+  status?: TryOnSessionStatus;
+  resultUrl?: string | null;
+  sanitizedErrorMessage?: string | null;
+  error?: string;
+};
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollSessionUntilTerminal(
+  sessionId: string,
+  isCancelled: () => boolean,
+): Promise<SessionPollPayload> {
+  let attempt = 0;
+
+  while (!isCancelled()) {
+    const response = await fetch(`/api/try-on/sessions/${sessionId}`, {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    const payload = (await response.json().catch(() => null)) as SessionPollPayload | null;
+
+    if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 410) {
+      throw new Error(payload?.error ?? "This session is no longer available.");
+    }
+
+    if (!response.ok && response.status !== 503) {
+      throw new Error(payload?.error ?? "Unable to check try-on status.");
+    }
+
+    const status = payload?.status;
+
+    if (status === "completed") {
+      if (!payload?.resultUrl) {
+        throw new Error("Try-on completed without a result.");
+      }
+
+      return payload;
+    }
+
+    if (status === "failed" || status === "cancelled") {
+      throw new Error(payload?.sanitizedErrorMessage ?? payload?.error ?? "Try-on generation failed.");
+    }
+
+    if (status && !shouldContinueSessionPolling(status)) {
+      throw new Error("Try-on is in an unexpected state.");
+    }
+
+    await sleep(computeSessionPollDelayMs(attempt));
+    attempt += 1;
+  }
+
+  throw new Error("Try-on polling was cancelled.");
+}
 
 type ProductTryOnProps = {
   brandSlug: string;
@@ -44,6 +106,7 @@ export function ProductTryOn({
   productImageUrl,
 }: ProductTryOnProps) {
   const attemptRef = useRef<AttemptState>(createAttemptState());
+  const pollAbortRef = useRef(false);
   const [personFile, setPersonFile] = useState<File | null>(null);
   const [consentToStore, setConsentToStore] = useState(false);
   const [phase, setPhase] = useState<ProductTryOnPhase>("idle");
@@ -55,6 +118,12 @@ export function ProductTryOn({
     setResultUrl(null);
     setError(null);
     setPhase("idle");
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      pollAbortRef.current = true;
+    };
   }, []);
 
   const handlePersonFileChange = useCallback(
@@ -100,12 +169,14 @@ export function ProductTryOn({
     phase !== "optimizing" &&
     phase !== "uploading" &&
     phase !== "validating" &&
-    phase !== "generating";
+    phase !== "polling";
 
   async function startTryOn() {
     if (!personFile) {
       return;
     }
+
+    pollAbortRef.current = false;
 
     if (
       shouldMintNewClientRequestId({
@@ -187,7 +258,7 @@ export function ProductTryOn({
         );
       }
 
-      if (!validateResponse.ok) {
+      if (validateResponse.status !== 202 && !validateResponse.ok) {
         attemptRef.current = {
           ...attemptRef.current,
           sessionStatus: validatePayload?.status ?? "failed",
@@ -200,31 +271,18 @@ export function ProductTryOn({
         sessionStatus: validatePayload?.status ?? "queued",
       };
 
-      setPhase("generating");
+      setPhase("polling");
 
-      const generateResponse = await fetch(
-        `/api/try-on/sessions/${createPayload.sessionId}/generate`,
-        { method: "POST" },
+      const pollPayload = await pollSessionUntilTerminal(
+        createPayload.sessionId,
+        () => pollAbortRef.current,
       );
-      const generatePayload = await generateResponse.json().catch(() => null);
-
-      if (!generateResponse.ok) {
-        attemptRef.current = {
-          ...attemptRef.current,
-          sessionStatus: generatePayload?.status ?? "failed",
-        };
-        throw new Error(generatePayload?.error ?? "Try-on generation failed.");
-      }
-
-      if (!generatePayload.resultUrl) {
-        throw new Error("Try-on completed without a result.");
-      }
 
       attemptRef.current = {
         ...attemptRef.current,
-        sessionStatus: generatePayload?.status ?? "completed",
+        sessionStatus: pollPayload.status ?? "completed",
       };
-      setResultUrl(generatePayload.resultUrl);
+      setResultUrl(pollPayload.resultUrl ?? null);
       setPhase("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -233,6 +291,7 @@ export function ProductTryOn({
   }
 
   function handleTryAnother() {
+    pollAbortRef.current = true;
     resetAttemptState();
   }
 
@@ -241,7 +300,7 @@ export function ProductTryOn({
     phase === "optimizing" ||
     phase === "uploading" ||
     phase === "validating" ||
-    phase === "generating";
+    phase === "polling";
 
   return (
     <div className="space-y-8">
@@ -314,7 +373,7 @@ export function ProductTryOn({
               {phase === "optimizing" && "Optimizing your photo…"}
               {phase === "uploading" && "Uploading your photo…"}
               {phase === "validating" && "Validating upload and reserving credits…"}
-              {phase === "generating" && "Generating your try-on…"}
+              {phase === "polling" && "Generating your try-on…"}
             </p>
           ) : null}
 

@@ -88,15 +88,61 @@ export async function markSessionUploadValidated(sessionId: string): Promise<boo
   return !error;
 }
 
-export async function markSessionProcessing(sessionId: string): Promise<boolean> {
+export async function markSessionProcessing(
+  sessionId: string,
+  providerJobId?: string | null,
+): Promise<boolean> {
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("try_on_sessions")
-    .update({ status: "processing" })
+    .update({
+      status: "processing",
+      ...(providerJobId ? { provider_job_id: providerJobId } : {}),
+    })
     .eq("id", sessionId)
     .eq("status", "queued");
 
   return !error;
+}
+
+export async function setSessionProviderRequestId(
+  sessionId: string,
+  providerRequestId: string,
+): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase
+    .from("try_on_sessions")
+    .update({ provider_request_id: providerRequestId })
+    .eq("id", sessionId)
+    .neq("status", "completed");
+}
+
+export async function markSessionDeleted(sessionId: string): Promise<boolean> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("try_on_sessions")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", sessionId)
+    .is("deleted_at", null);
+
+  return !error;
+}
+
+export async function listExpiredSessionsForCleanup(limit: number) {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("try_on_sessions")
+    .select("*")
+    .is("deleted_at", null)
+    .lte("expires_at", new Date().toISOString())
+    .order("expires_at", { ascending: true })
+    .limit(limit);
+
+  if (error || !data) {
+    return [];
+  }
+
+  return data;
 }
 
 export async function setSessionResultPath(sessionId: string, resultStoragePath: string): Promise<boolean> {
