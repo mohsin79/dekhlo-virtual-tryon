@@ -135,8 +135,9 @@ Not exposed on anonymous/public session responses. Not used for authorization.
 - Backoff: 1s initial, +500ms per attempt, max ~5s
 - Handles 503 without creating a new session
 - Displays signed `resultUrl` from status endpoint (refresh via authorized GET)
+- **Choose another photo** (commit `9f60f1a`): resets uploader and requires a new file + explicit **Generate try-on**; blocks same-photo/same-product retries via client fingerprint (no extra session or credit until generate)
 
-Helpers: `lib/try-on/sessions/session-polling.ts`.
+Helpers: `lib/try-on/sessions/session-polling.ts`, `lib/try-on/sessions/product-try-on-flow.ts`, `lib/try-on/sessions/photo-fingerprint.ts`.
 
 ## Retention cleanup cron
 
@@ -198,52 +199,73 @@ node scripts/phase7-send-generation-event.mjs <sessionId> <brandId>
 
 Do not paste production Inngest keys into local env files committed to git.
 
-## Runtime verification (2026-07-26)
+## Runtime verification (final)
 
-### Cause of the prior `GET /api/inngest` 500
+Phase 7 commits on branch `B2B-saas-implementation`:
 
-The Next.js log showed:
+| Commit | Summary |
+|--------|---------|
+| `38febb17…` | Async Inngest generation, polling, cleanup cron |
+| `d1eff793…` | Inngest dev serve fix (`INNGEST_DEV=1`, `GET /api/inngest` 200) |
+| `9f60f1a9…` | Choose another photo UX; no accidental re-generation |
 
-`In cloud mode but no signing key found. For local dev, set the INNGEST_DEV=1 env var.`
+### Serve route fix (prior `GET /api/inngest` 500)
 
-**Root cause:** `INNGEST_DEV` was not loaded in the running app (missing from `.env.local` while the dev server was up). The Inngest SDK defaulted to **cloud** mode; `InngestCommHandler.checkModeConfiguration()` rejected the request and returned the internal 500 response.
+The Next.js log showed: `In cloud mode but no signing key found. For local dev, set the INNGEST_DEV=1 env var.`
 
-**Fix:** Set `INNGEST_DEV=1` in `.env.local`, pass `isDev: isInngestDevMode()` when constructing the client (`lib/inngest/client.ts`), and use `npm run dev:inngest` so local mode is explicit on Windows.
+**Root cause:** `INNGEST_DEV` was not loaded while the dev server was running. The SDK stayed in **cloud** mode and `checkModeConfiguration()` returned 500.
 
-This was **not** a proxy redirect, import-time Supabase/OpenAI failure, or incorrect v4 `serve()` wiring.
+**Fix (in `d1eff793`):** `INNGEST_DEV=1` in `.env.local`, `isDev: isInngestDevMode()` on the client, `npm run dev:inngest`.
 
-### Healthy `GET /api/inngest` (local)
+Healthy local introspection (safe fields): `"mode":"dev"`, `"has_event_key":false`, `"has_signing_key":false`. Application registers **two** functions in `lib/inngest/registry.ts`; SDK `function_count` may include one internal v4 entry.
 
-After the fix, example introspection body (safe fields only):
+### Manual runtime verification — **passed**
 
-```json
-{
-  "mode": "dev",
-  "has_event_key": false,
-  "has_signing_key": false,
-  "function_count": 3,
-  "schema_version": "2024-05-24",
-  "extra": { "native_crypto": true }
-}
-```
+Verified locally with `npm run dev:inngest`, Inngest Dev Server (`http://localhost:3000/api/inngest`), Dev UI on port 8288, and merchant `/try/[brandSlug]/[productSlug]` against the configured Supabase project. No credentials, tokens, signed URLs, or customer image data are recorded here.
 
-Application registers **two** functions (`INNGEST_FUNCTION_COUNT === 2` in `lib/inngest/registry.ts`). The SDK introspection `function_count` may include an additional internal entry in v4; use the Dev UI function list as the source of truth for merchant/cleanup workers.
+| Area | Result |
+|------|--------|
+| Real asynchronous generation through Inngest | **Passed** |
+| Browser polling to completed result | **Passed** |
+| `provider_job_id` populated (Inngest run ID) | **Passed** |
+| One reserve and one consume transaction per successful try-on | **Passed** |
+| Deterministic event ID deduplication (`try-on-generation:{sessionId}`) | **Passed** |
+| Completed-session worker skip (duplicate/replay) | **Passed** |
+| Duplicate events do not consume credits twice | **Passed** |
+| Transient failure retries successfully (fail-once local hook test; hook removed before close) | **Passed** |
+| No release transaction during transient retries | **Passed** |
+| Permanent failure exhausts configured retries (always-fail local hook test; hook removed before close) | **Passed** |
+| Permanent failure creates exactly one release transaction | **Passed** |
+| Failed session returns reserved credits to available balance | **Passed** |
+| Expired `pending_upload` session cleanup | **Passed** |
+| Expired `failed` session cleanup | **Passed** |
+| Failed-session release idempotent during cleanup | **Passed** |
+| Expired `completed` session cleanup | **Passed** |
+| Completed session: consumed credits unchanged after cleanup | **Passed** |
+| Private customer uploads and result images removed | **Passed** |
+| `product-images` untouched | **Passed** |
+| `deleted_at` soft deletion after cleanup | **Passed** |
+| Hourly cron `0 * * * *` triggers automatically | **Passed** |
+| Cleanup batch size **50** and path validation unchanged | **Passed** |
 
-### Dev Server sync
+Temporary local test hooks used only for retry/final-failure manual runs were **not committed** and were removed before Phase 7 close.
 
-Verified: Dev Server on port **8288**, repeated **`PUT /api/inngest` → 200**, generation event received and **`process-try-on-generation`** run completed for a non-existent session (skip path, no credit RPCs).
+### npm audit (`npm audit --omit=dev`)
 
-### Full merchant try-on (browser + OpenAI)
+Run date: **2026-07-26** (after Phase 7 close verification).
 
-Requires a manual pass on `/try/[brandSlug]/[productSlug]` with credits, both servers running, and a valid person photo. Automated checks confirmed: validate-upload/generate routes do not call OpenAI; dispatch + step execution go through `/api/inngest`.
+| Field | Value |
+|-------|--------|
+| Request completed | **Yes** |
+| Exit code | **1** (vulnerabilities reported) |
+| Severity counts | **9 high**, 0 moderate, 0 low, 0 critical |
+| Production dependency packages named in report | `brace-expansion`, `minimatch`, `glob`, `rimraf`, `gaxios`, `gcp-metadata`, `postcss`, `next`, `sharp` |
 
-### Retry, final failure, cleanup cron
+**Inngest-related chain:** `inngest@4.13.0` → OpenTelemetry GCP detector → `gcp-metadata` → `gaxios` → vulnerable `glob`/`minimatch`/`brace-expansion`/`rimraf` versions. These advisories are **introduced or reachable via the Inngest 4.x dependency tree** (not present before Inngest was added in Phase 7).
 
-Not fully exercised in CI (requires OpenAI or deliberate fault injection). Use the Dev UI to replay steps, invoke **`cleanup-expired-try-on-artifacts`** against expired test rows, and follow the failure matrix in §Failure handling above.
+**Previously acknowledged transitive advisories (unchanged):** `postcss` and `sharp` bundled/transitive under **`next@16.2.11`** (same class of Next.js/PostCSS/Sharp issues documented in earlier phases; `npm audit fix --force` would downgrade Next and is **not** applied).
 
-### npm audit
-
-`npm audit --omit=dev` was re-run; the npm registry returned invalid JSON (network/registry issue). **Audit not completed** — re-run locally when registry connectivity is healthy. Do not use `npm audit fix`.
+Do **not** run `npm audit fix` or `npm audit fix --force` as part of Phase 7 close.
 
 ### Production Inngest Cloud
 
@@ -259,12 +281,12 @@ Still **not** connected in-repo. Configure keys and app sync per §Production se
 
 Production Inngest Cloud was **not** connected as part of Phase 7 implementation in-repo; operators must complete the steps above.
 
-## Testing
+## Testing (automated close — 2026-07-26)
 
 ```bash
-npm run test:unit          # includes tests/unit/phase7-inngest.test.ts
+npm run test:unit          # 80 tests (includes phase7-inngest, product-try-on-another-photo)
 npx supabase db reset --local
-npx supabase test db --local
+npx supabase test db --local   # 286 pgTAP tests, 15 files
 npx tsc --noEmit
 npm run lint
 npm run build
@@ -280,7 +302,15 @@ Phase 7 unit tests cover:
 - `@inngest/test` executions using production-shaped test doubles (same step IDs and retry/concurrency options as the live functions)
 - Inngest env configuration rules
 
-OpenAI is not called in automated tests. Production Inngest functions are validated via the local Dev Server (see above).
+- `@inngest/test` executions using production-shaped test doubles (same step IDs and retry/concurrency options as the live functions)
+- Inngest env configuration rules
+- Choose-another-photo flow and duplicate-photo fingerprint guards
+
+OpenAI is not called in automated tests. Full merchant async behavior is validated via manual runtime verification (table above).
+
+## Phase 7 status
+
+**Closed** after documentation of passed manual verification and automated checks above. Phase 8 (platform admin, audit, billing, Sentry, PostHog) is **not** started.
 
 ## Rollback strategy
 
