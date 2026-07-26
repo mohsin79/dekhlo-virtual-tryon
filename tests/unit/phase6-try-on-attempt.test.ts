@@ -89,9 +89,16 @@ describe("session upload eligibility", () => {
     );
   });
 
-  it("resets attempt state when replacing photo after completion", () => {
+  it("does not reset attempt identifiers when choosing another photo from done", () => {
     assert.equal(
       shouldResetAttemptOnPhotoChange({ phase: "done", sessionStatus: "completed" }),
+      false,
+    );
+  });
+
+  it("mints a new clientRequestId when generating after completion", () => {
+    assert.equal(
+      shouldMintNewClientRequestId({ phase: "photo_selected", sessionStatus: "completed" }),
       true,
     );
   });

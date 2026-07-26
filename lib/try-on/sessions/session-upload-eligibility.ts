@@ -10,6 +10,8 @@ export function isSessionUploadReusable(status: TryOnSessionStatus): boolean {
 
 export type ProductTryOnPhase =
   | "idle"
+  | "awaiting_new_photo"
+  | "photo_selected"
   | "creating"
   | "optimizing"
   | "uploading"
@@ -18,13 +20,19 @@ export type ProductTryOnPhase =
   | "done"
   | "error";
 
-/** Whether the UI should mint a fresh clientRequestId before POST /api/try-on/sessions. */
+/** Whether POST /api/try-on/sessions should use a fresh clientRequestId for this attempt. */
 export function shouldMintNewClientRequestId(input: {
   phase: ProductTryOnPhase;
   sessionStatus: TryOnSessionStatus | null;
 }): boolean {
   if (input.phase === "done") {
     return true;
+  }
+
+  if (input.phase === "photo_selected") {
+    if (input.sessionStatus && !isSessionUploadReusable(input.sessionStatus)) {
+      return true;
+    }
   }
 
   if (input.phase === "error" && input.sessionStatus && !isSessionUploadReusable(input.sessionStatus)) {
@@ -34,17 +42,17 @@ export function shouldMintNewClientRequestId(input: {
   return false;
 }
 
-/** Whether selecting/replacing the person photo should reset attempt state. */
+/** Whether UI reset should clear attempt identifiers (not used on “choose another photo” alone). */
 export function shouldResetAttemptOnPhotoChange(input: {
   phase: ProductTryOnPhase;
   sessionStatus: TryOnSessionStatus | null;
 }): boolean {
   if (input.phase === "done") {
-    return true;
+    return false;
   }
 
   if (input.sessionStatus && !isSessionUploadReusable(input.sessionStatus)) {
-    return true;
+    return input.phase !== "awaiting_new_photo";
   }
 
   return false;

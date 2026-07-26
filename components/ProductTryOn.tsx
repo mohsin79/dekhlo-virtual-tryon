@@ -8,6 +8,20 @@ import {
   type ProductTryOnPhase,
 } from "@/lib/try-on/sessions/session-upload-eligibility";
 import {
+  computePhotoFingerprint,
+  DUPLICATE_COMPLETED_PHOTO_MESSAGE,
+  isDuplicateOfLastCompletedPhoto,
+  type CompletedPhotoFingerprint,
+} from "@/lib/try-on/sessions/photo-fingerprint";
+import {
+  canStartProductTryOnGeneration,
+  CHOOSE_ANOTHER_PHOTO_LABEL,
+  GENERATE_TRY_ON_LABEL,
+  isProductTryOnBusy,
+  phaseAfterChooseAnotherPhoto,
+  phaseAfterPersonPhotoSelected,
+} from "@/lib/try-on/sessions/product-try-on-flow";
+import {
   preparePersonPhotoForUpload,
   validatePersonPhotoFileSize,
   validatePersonPhotoMimeType,
@@ -25,6 +39,12 @@ type SessionPollPayload = {
   resultUrl?: string | null;
   sanitizedErrorMessage?: string | null;
   error?: string;
+};
+
+type AttemptState = {
+  clientRequestId: string;
+  sessionId: string | null;
+  sessionStatus: TryOnSessionStatus | null;
 };
 
 async function sleep(ms: number): Promise<void> {
@@ -78,20 +98,7 @@ async function pollSessionUntilTerminal(
   throw new Error("Try-on polling was cancelled.");
 }
 
-type ProductTryOnProps = {
-  brandSlug: string;
-  productSlug: string;
-  productName: string;
-  productImageUrl: string;
-};
-
-type AttemptState = {
-  clientRequestId: string;
-  sessionId: string | null;
-  sessionStatus: TryOnSessionStatus | null;
-};
-
-function createAttemptState(): AttemptState {
+function createInitialAttemptState(): AttemptState {
   return {
     clientRequestId: crypto.randomUUID(),
     sessionId: null,
@@ -99,32 +106,52 @@ function createAttemptState(): AttemptState {
   };
 }
 
+type ProductTryOnProps = {
+  brandSlug: string;
+  productSlug: string;
+  productName: string;
+  productImageUrl: string;
+};
+
 export function ProductTryOn({
   brandSlug,
   productSlug,
   productName,
   productImageUrl,
 }: ProductTryOnProps) {
-  const attemptRef = useRef<AttemptState>(createAttemptState());
+  const productKey = `${brandSlug}/${productSlug}`;
+  const attemptRef = useRef<AttemptState>(createInitialAttemptState());
   const pollAbortRef = useRef(false);
+  const lastCompletedPhotoRef = useRef<CompletedPhotoFingerprint | null>(null);
+
+  const [uploaderKey, setUploaderKey] = useState(0);
   const [personFile, setPersonFile] = useState<File | null>(null);
   const [consentToStore, setConsentToStore] = useState(false);
   const [phase, setPhase] = useState<ProductTryOnPhase>("idle");
-  const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [currentResultUrl, setCurrentResultUrl] = useState<string | null>(null);
+  const [previousResultUrl, setPreviousResultUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const resetAttemptState = useCallback(() => {
-    attemptRef.current = createAttemptState();
-    setResultUrl(null);
-    setError(null);
-    setPhase("idle");
-  }, []);
 
   useEffect(() => {
     return () => {
       pollAbortRef.current = true;
     };
   }, []);
+
+  const mintClientRequestIdIfNeeded = useCallback(() => {
+    if (
+      shouldMintNewClientRequestId({
+        phase,
+        sessionStatus: attemptRef.current.sessionStatus,
+      })
+    ) {
+      attemptRef.current = {
+        ...attemptRef.current,
+        clientRequestId: crypto.randomUUID(),
+        sessionId: null,
+      };
+    }
+  }, [phase]);
 
   const handlePersonFileChange = useCallback(
     (file: File | null) => {
@@ -134,12 +161,17 @@ export function ProductTryOn({
           sessionStatus: attemptRef.current.sessionStatus,
         })
       ) {
-        resetAttemptState();
+        attemptRef.current = {
+          ...attemptRef.current,
+          sessionId: null,
+        };
       }
 
       if (!file) {
         setPersonFile(null);
-        setError(null);
+        if (phase !== "done") {
+          setError(null);
+        }
         return;
       }
 
@@ -159,41 +191,57 @@ export function ProductTryOn({
 
       setError(null);
       setPersonFile(file);
+      setPhase((current) => phaseAfterPersonPhotoSelected(current));
     },
-    [phase, resetAttemptState],
+    [phase],
   );
 
-  const canStart =
-    !!personFile &&
-    phase !== "creating" &&
-    phase !== "optimizing" &&
-    phase !== "uploading" &&
-    phase !== "validating" &&
-    phase !== "polling";
+  const handleChooseAnotherPhoto = useCallback(() => {
+    pollAbortRef.current = true;
+    setPersonFile(null);
+    setError(null);
+    setUploaderKey((value) => value + 1);
+    setPhase(phaseAfterChooseAnotherPhoto());
+  }, []);
 
-  async function startTryOn() {
-    if (!personFile) {
+  const startTryOn = useCallback(async () => {
+    if (!personFile || !canStartProductTryOnGeneration({ phase, hasPersonFile: true })) {
       return;
     }
 
     pollAbortRef.current = false;
-
-    if (
-      shouldMintNewClientRequestId({
-        phase,
-        sessionStatus: attemptRef.current.sessionStatus,
-      })
-    ) {
-      resetAttemptState();
-    }
+    mintClientRequestIdIfNeeded();
 
     const { clientRequestId } = attemptRef.current;
 
-    setPhase("creating");
+    setPreviousResultUrl(currentResultUrl);
+    setCurrentResultUrl(null);
+    setPhase("optimizing");
     setError(null);
-    setResultUrl(null);
 
     try {
+      const prepared = await preparePersonPhotoForUpload(personFile);
+
+      if (!prepared.ok) {
+        throw new Error(prepared.error.message);
+      }
+
+      const fingerprint = await computePhotoFingerprint(prepared.value.file);
+
+      if (
+        isDuplicateOfLastCompletedPhoto({
+          fingerprint,
+          productKey,
+          lastCompleted: lastCompletedPhotoRef.current,
+        })
+      ) {
+        setError(DUPLICATE_COMPLETED_PHOTO_MESSAGE);
+        setPhase("photo_selected");
+        return;
+      }
+
+      setPhase("creating");
+
       const createResponse = await fetch("/api/try-on/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -216,14 +264,6 @@ export function ProductTryOn({
         sessionId: createPayload.sessionId,
         sessionStatus: createPayload.status ?? "pending_upload",
       };
-
-      setPhase("optimizing");
-
-      const prepared = await preparePersonPhotoForUpload(personFile);
-
-      if (!prepared.ok) {
-        throw new Error(prepared.error.message);
-      }
 
       setPhase("uploading");
 
@@ -282,25 +322,35 @@ export function ProductTryOn({
         ...attemptRef.current,
         sessionStatus: pollPayload.status ?? "completed",
       };
-      setResultUrl(pollPayload.resultUrl ?? null);
+
+      lastCompletedPhotoRef.current = { fingerprint, productKey };
+      setCurrentResultUrl(pollPayload.resultUrl ?? null);
+      setPreviousResultUrl(null);
       setPhase("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setPhase("error");
     }
-  }
+  }, [
+    brandSlug,
+    consentToStore,
+    currentResultUrl,
+    mintClientRequestIdIfNeeded,
+    personFile,
+    phase,
+    productKey,
+    productSlug,
+  ]);
 
-  function handleTryAnother() {
-    pollAbortRef.current = true;
-    resetAttemptState();
-  }
+  const canGenerate = canStartProductTryOnGeneration({
+    phase,
+    hasPersonFile: !!personFile,
+  });
 
-  const busy =
-    phase === "creating" ||
-    phase === "optimizing" ||
-    phase === "uploading" ||
-    phase === "validating" ||
-    phase === "polling";
+  const busy = isProductTryOnBusy(phase);
+  const displayResultUrl = phase === "done" ? currentResultUrl : busy ? null : currentResultUrl;
+  const showPreviousResult =
+    !!previousResultUrl && (phase === "awaiting_new_photo" || phase === "photo_selected" || busy);
 
   return (
     <div className="space-y-8">
@@ -320,6 +370,7 @@ export function ProductTryOn({
 
         <div className="space-y-4">
           <Uploader
+            key={uploaderKey}
             id="person"
             index="01"
             indexColor="var(--color-accent)"
@@ -348,24 +399,27 @@ export function ProductTryOn({
           <button
             type="button"
             className="btn btn-primary w-full"
-            disabled={!canStart}
+            disabled={!canGenerate}
             onClick={startTryOn}
           >
-            {busy ? "Working on your try-on…" : phase === "done" ? "Try another photo" : "Try this product on"}
+            {busy ? "Working on your try-on…" : GENERATE_TRY_ON_LABEL}
           </button>
 
-          {phase === "error" && error ? (
-            <p className="text-sm text-destructive">{error}</p>
+          {phase === "done" ? (
+            <button type="button" className="btn btn-secondary w-full" onClick={handleChooseAnotherPhoto}>
+              {CHOOSE_ANOTHER_PHOTO_LABEL}
+            </button>
           ) : null}
+
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
           <p className="text-sm text-muted-foreground">
             Only your person photo is uploaded here. The garment comes from the merchant&apos;s catalog.
-            Credit purchases and async processing will arrive in later phases.
           </p>
         </div>
       </section>
 
-      {(busy || phase === "done") && (
+      {(busy || phase === "done" || showPreviousResult) && (
         <section className="rounded-xl border border-border/70 bg-surface/80 p-6">
           {busy ? (
             <p className="text-muted-foreground">
@@ -377,21 +431,26 @@ export function ProductTryOn({
             </p>
           ) : null}
 
-          {phase === "done" && resultUrl ? (
+          {showPreviousResult && previousResultUrl ? (
+            <div className="mb-6 space-y-3">
+              <h3 className="font-heading text-lg text-muted-foreground">Previous result</h3>
+              <div className="overflow-hidden rounded-xl opacity-90">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={previousResultUrl} alt="Previous try-on result" className="w-full max-w-md object-cover" />
+              </div>
+            </div>
+          ) : null}
+
+          {displayResultUrl ? (
             <div className="space-y-4">
               <h3 className="font-heading text-xl">Your try-on result</h3>
               <div className="overflow-hidden rounded-xl">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={resultUrl} alt="Try-on result" className="w-full max-w-md object-cover" />
+                <img src={displayResultUrl} alt="Try-on result" className="w-full max-w-md object-cover" />
               </div>
-              <div className="flex flex-wrap gap-3">
-                <a className="btn btn-secondary inline-flex" href={resultUrl} download="dekhlo-try-on.png">
-                  Download result
-                </a>
-                <button type="button" className="btn btn-secondary" onClick={handleTryAnother}>
-                  Try another photo
-                </button>
-              </div>
+              <a className="btn btn-secondary inline-flex" href={displayResultUrl} download="dekhlo-try-on.png">
+                Download result
+              </a>
             </div>
           ) : null}
         </section>
