@@ -275,6 +275,48 @@ describe("Inngest cleanup function (@inngest/test)", () => {
   });
 });
 
+describe("Inngest client mode", () => {
+  it("uses dev mode when INNGEST_DEV=1 without a signing key", () => {
+    const previousDev = process.env.INNGEST_DEV;
+    const previousSigningKey = process.env.INNGEST_SIGNING_KEY;
+
+    process.env.INNGEST_DEV = "1";
+    delete process.env.INNGEST_SIGNING_KEY;
+
+    const client = new Inngest({ id: "dekhlo-test-mode", isDev: isInngestDevMode() });
+    assert.equal(client.mode, "dev");
+
+    process.env.INNGEST_DEV = previousDev;
+    if (previousSigningKey !== undefined) {
+      process.env.INNGEST_SIGNING_KEY = previousSigningKey;
+    } else {
+      delete process.env.INNGEST_SIGNING_KEY;
+    }
+  });
+
+  it("requires cloud mode when INNGEST_DEV is unset", () => {
+    const previousDev = process.env.INNGEST_DEV;
+    delete process.env.INNGEST_DEV;
+
+    const client = new Inngest({ id: "dekhlo-test-mode", isDev: isInngestDevMode() });
+    assert.equal(client.mode, "cloud");
+
+    process.env.INNGEST_DEV = previousDev;
+  });
+});
+
+describe("registered Inngest functions", () => {
+  it("registers exactly two Phase 7 functions", async () => {
+    const { INNGEST_FUNCTION_COUNT, INNGEST_FUNCTION_IDS } = await import("../../lib/inngest/registry");
+
+    assert.equal(INNGEST_FUNCTION_COUNT, 2);
+    assert.deepEqual([...INNGEST_FUNCTION_IDS], [
+      "process-try-on-generation",
+      "cleanup-expired-try-on-artifacts",
+    ]);
+  });
+});
+
 describe("API routing expectations", () => {
   it("does not treat /api/inngest as a dashboard-protected path", () => {
     const protectedPrefixes = ["/dashboard", "/onboarding"];

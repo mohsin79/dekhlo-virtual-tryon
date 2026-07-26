@@ -49,7 +49,8 @@ Implementation: `lib/inngest/events.ts`, `lib/try-on/sessions/dispatch-generatio
 
 - **App ID:** `dekhlo`
 - **Module:** `lib/inngest/client.ts`
-- **Event key:** from `INNGEST_EVENT_KEY` (undefined in pure local dev with `INNGEST_DEV=1`)
+- **Dev mode:** `isDev: isInngestDevMode()` so `INNGEST_DEV=1` selects Inngest **dev** mode (no signing key required for serve introspection)
+- **Event key:** from `INNGEST_EVENT_KEY` (optional when `INNGEST_DEV=1`)
 
 ## Serve route
 
@@ -57,7 +58,7 @@ Implementation: `lib/inngest/events.ts`, `lib/try-on/sessions/dispatch-generatio
 - **Runtime:** Node.js
 - **Exports:** `GET`, `POST`, `PUT` via `inngest/next` `serve()`
 - **maxDuration:** `300` seconds (aligns with long-running generation steps on Vercel-style hosts)
-- **Registered functions:** `process-try-on-generation`, `cleanup-expired-try-on-artifacts`
+- **Registered functions:** see `lib/inngest/registry.ts` (`process-try-on-generation`, `cleanup-expired-try-on-artifacts`)
 - **proxy.ts:** does not protect `/api/inngest`; only `/dashboard` and `/onboarding` redirect unauthenticated users
 
 ## Dispatch (canonical merchant path)
@@ -164,17 +165,89 @@ Implementation: `lib/try-on/cleanup/expired-session-cleanup.ts`, `listExpiredSes
 
 ## Local Dev Server
 
-1. Start Supabase and the app with `INNGEST_DEV=1` in `.env.local`.
-2. Run the [Inngest Dev Server](https://www.inngest.com/docs/local-development) pointed at:
+1. Ensure `.env.local` includes `INNGEST_DEV=1` (mirrors `.env.example`). Without it, the Inngest SDK stays in **cloud** mode and `GET /api/inngest` returns **500** because no signing key is configured.
+2. Terminal 1 — start Next.js on port 3000:
 
-   `http://localhost:3000/api/inngest`
+   ```powershell
+   npm run dev:inngest
+   ```
 
-3. In the Dev UI confirm:
-   - App `dekhlo` is synced
-   - `process-try-on-generation` and `cleanup-expired-try-on-artifacts` are registered
-   - One generation event → one run; steps visible; duplicate event id does not double-consume credits
+   (`dev:inngest` sets `INNGEST_DEV=1` via `cross-env` and binds `-p 3000`.)
+
+3. Confirm serve introspection **before** starting the Dev Server:
+
+   ```powershell
+   Invoke-WebRequest http://localhost:3000/api/inngest -UseBasicParsing
+   ```
+
+   Expected: **HTTP 200** JSON with `"mode":"dev"`, `"has_event_key":false`, `"has_signing_key":false`, and a `function_count` field (Inngest v4 may report one extra internal SDK entry in addition to the two application functions).
+
+4. Terminal 2 — Inngest Dev Server:
+
+   ```powershell
+   npx --ignore-scripts=false inngest-cli@latest dev --no-discovery -u http://localhost:3000/api/inngest
+   ```
+
+5. Dev UI: `http://localhost:8288` — confirm app **`dekhlo`**, functions **`process-try-on-generation`** (event `dekhlo/try-on.generation.requested`) and **`cleanup-expired-try-on-artifacts`** (cron `0 * * * *`). Successful sync shows repeated **`PUT /api/inngest` 200** in the Next.js log.
+
+Optional event smoke test (no OpenAI; missing session id skips safely):
+
+```powershell
+node scripts/phase7-send-generation-event.mjs <sessionId> <brandId>
+```
 
 Do not paste production Inngest keys into local env files committed to git.
+
+## Runtime verification (2026-07-26)
+
+### Cause of the prior `GET /api/inngest` 500
+
+The Next.js log showed:
+
+`In cloud mode but no signing key found. For local dev, set the INNGEST_DEV=1 env var.`
+
+**Root cause:** `INNGEST_DEV` was not loaded in the running app (missing from `.env.local` while the dev server was up). The Inngest SDK defaulted to **cloud** mode; `InngestCommHandler.checkModeConfiguration()` rejected the request and returned the internal 500 response.
+
+**Fix:** Set `INNGEST_DEV=1` in `.env.local`, pass `isDev: isInngestDevMode()` when constructing the client (`lib/inngest/client.ts`), and use `npm run dev:inngest` so local mode is explicit on Windows.
+
+This was **not** a proxy redirect, import-time Supabase/OpenAI failure, or incorrect v4 `serve()` wiring.
+
+### Healthy `GET /api/inngest` (local)
+
+After the fix, example introspection body (safe fields only):
+
+```json
+{
+  "mode": "dev",
+  "has_event_key": false,
+  "has_signing_key": false,
+  "function_count": 3,
+  "schema_version": "2024-05-24",
+  "extra": { "native_crypto": true }
+}
+```
+
+Application registers **two** functions (`INNGEST_FUNCTION_COUNT === 2` in `lib/inngest/registry.ts`). The SDK introspection `function_count` may include an additional internal entry in v4; use the Dev UI function list as the source of truth for merchant/cleanup workers.
+
+### Dev Server sync
+
+Verified: Dev Server on port **8288**, repeated **`PUT /api/inngest` → 200**, generation event received and **`process-try-on-generation`** run completed for a non-existent session (skip path, no credit RPCs).
+
+### Full merchant try-on (browser + OpenAI)
+
+Requires a manual pass on `/try/[brandSlug]/[productSlug]` with credits, both servers running, and a valid person photo. Automated checks confirmed: validate-upload/generate routes do not call OpenAI; dispatch + step execution go through `/api/inngest`.
+
+### Retry, final failure, cleanup cron
+
+Not fully exercised in CI (requires OpenAI or deliberate fault injection). Use the Dev UI to replay steps, invoke **`cleanup-expired-try-on-artifacts`** against expired test rows, and follow the failure matrix in §Failure handling above.
+
+### npm audit
+
+`npm audit --omit=dev` was re-run; the npm registry returned invalid JSON (network/registry issue). **Audit not completed** — re-run locally when registry connectivity is healthy. Do not use `npm audit fix`.
+
+### Production Inngest Cloud
+
+Still **not** connected in-repo. Configure keys and app sync per §Production setup below.
 
 ## Production setup (manual)
 
