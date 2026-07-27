@@ -74,7 +74,7 @@ export async function getUserContext(): Promise<UserContext | null> {
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id, full_name, avatar_path, created_at, updated_at")
+    .select("id, full_name, avatar_path, platform_role, created_at, updated_at")
     .eq("id", user.id)
     .maybeSingle();
 

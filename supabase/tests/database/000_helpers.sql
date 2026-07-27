@@ -109,6 +109,19 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION tests.assign_platform_admin(p_user_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  UPDATE public.profiles
+  SET platform_role = 'platform_admin'::public.platform_role
+  WHERE id = p_user_id;
+END;
+$$;
+
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA tests FROM PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA tests TO authenticated, anon, service_role, postgres;
 

@@ -7,8 +7,94 @@ export type Json =
   | Json[]
 
 export type Database = {
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
+      audit_logs: {
+        Row: {
+          action: string
+          actor_user_id: string
+          brand_id: string | null
+          created_at: string
+          id: string
+          idempotency_key: string
+          metadata: Json
+          reason: string
+          target_id: string | null
+          target_type: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id: string
+          brand_id?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key: string
+          metadata?: Json
+          reason: string
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string
+          brand_id?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string
+          metadata?: Json
+          reason?: string
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_logs_actor_user_id_fkey"
+            columns: ["actor_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_logs_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_logs_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "public_catalog_products"
+            referencedColumns: ["brand_id"]
+          },
+        ]
+      }
       brand_credit_balances: {
         Row: {
           brand_id: string
@@ -243,6 +329,7 @@ export type Database = {
           created_at: string
           full_name: string
           id: string
+          platform_role: Database["public"]["Enums"]["platform_role"] | null
           updated_at: string
         }
         Insert: {
@@ -250,6 +337,7 @@ export type Database = {
           created_at?: string
           full_name?: string
           id: string
+          platform_role?: Database["public"]["Enums"]["platform_role"] | null
           updated_at?: string
         }
         Update: {
@@ -257,6 +345,7 @@ export type Database = {
           created_at?: string
           full_name?: string
           id?: string
+          platform_role?: Database["public"]["Enums"]["platform_role"] | null
           updated_at?: string
         }
         Relationships: []
@@ -447,6 +536,44 @@ export type Database = {
       }
     }
     Functions: {
+      admin_grant_brand_credits: {
+        Args: {
+          p_actor: string
+          p_amount: number
+          p_brand_id: string
+          p_idempotency_key: string
+          p_reason: string
+        }
+        Returns: {
+          audit_log_id: string
+          available_credits: number
+          brand_id: string
+          consumed_credits: number
+          granted_credits: number
+          reserved_credits: number
+          transaction_id: string
+          was_created: boolean
+        }[]
+      }
+      admin_revoke_brand_credits: {
+        Args: {
+          p_actor: string
+          p_amount: number
+          p_brand_id: string
+          p_idempotency_key: string
+          p_reason: string
+        }
+        Returns: {
+          audit_log_id: string
+          available_credits: number
+          brand_id: string
+          consumed_credits: number
+          granted_credits: number
+          reserved_credits: number
+          transaction_id: string
+          was_created: boolean
+        }[]
+      }
       consume_reserved_brand_credits: {
         Args: { p_session_id: string }
         Returns: {
@@ -497,6 +624,7 @@ export type Database = {
           was_created: boolean
         }[]
       }
+      is_platform_admin: { Args: { p_user_id?: string }; Returns: boolean }
       is_valid_customer_upload_path: {
         Args: { object_path: string }
         Returns: boolean
@@ -509,6 +637,7 @@ export type Database = {
         Args: { object_path: string }
         Returns: boolean
       }
+      platform_role_change_is_trusted: { Args: never; Returns: boolean }
       queue_try_on_session: {
         Args: { p_session_id: string }
         Returns: {
@@ -552,7 +681,14 @@ export type Database = {
     }
     Enums: {
       brand_role: "owner" | "admin" | "editor" | "analyst"
-      credit_transaction_type: "grant" | "reserve" | "consume" | "release"
+      credit_transaction_type:
+        | "grant"
+        | "reserve"
+        | "consume"
+        | "release"
+        | "admin_grant"
+        | "admin_revoke"
+      platform_role: "platform_admin"
       try_on_session_status:
         | "pending_upload"
         | "queued"
@@ -685,10 +821,21 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       brand_role: ["owner", "admin", "editor", "analyst"],
-      credit_transaction_type: ["grant", "reserve", "consume", "release"],
+      credit_transaction_type: [
+        "grant",
+        "reserve",
+        "consume",
+        "release",
+        "admin_grant",
+        "admin_revoke",
+      ],
+      platform_role: ["platform_admin"],
       try_on_session_status: [
         "pending_upload",
         "queued",

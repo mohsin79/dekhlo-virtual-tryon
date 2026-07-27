@@ -72,8 +72,8 @@ SELECT is(
     JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
     WHERE pg_type.typname = 'credit_transaction_type'
   ),
-  ARRAY['grant', 'reserve', 'consume', 'release']::text[],
-  'credit transaction enum values are exactly grant reserve consume release'
+  ARRAY['grant', 'reserve', 'consume', 'release', 'admin_grant', 'admin_revoke']::text[],
+  'credit transaction enum includes Phase 8 admin types'
 );
 
 SELECT throws_ok(
