@@ -14,11 +14,13 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import type { UserContext } from "@/lib/auth/get-user-context";
 import { canViewCredits } from "@/lib/credits/permissions";
+import { canViewLeads } from "@/lib/leads/permissions";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/products", label: "Products" },
+  { href: "/dashboard/leads", label: "Leads", requiresLeadAccess: true },
   { href: "/dashboard/credits", label: "Credits", requiresCreditAccess: true },
 ] as const;
 
@@ -40,9 +42,17 @@ function initials(name: string | null, email: string | null): string {
 }
 
 function SidebarNav({ pathname, context }: { pathname: string; context: UserContext }) {
-  const items = NAV_ITEMS.filter(
-    (item) => !("requiresCreditAccess" in item) || canViewCredits(context.currentRole),
-  );
+  const items = NAV_ITEMS.filter((item) => {
+    if ("requiresCreditAccess" in item) {
+      return canViewCredits(context.currentRole);
+    }
+
+    if ("requiresLeadAccess" in item) {
+      return canViewLeads(context.currentRole);
+    }
+
+    return true;
+  });
 
   return (
     <nav className="flex flex-col gap-1" aria-label="Dashboard">

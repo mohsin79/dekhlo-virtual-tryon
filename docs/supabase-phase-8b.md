@@ -1,6 +1,6 @@
 # Supabase Phase 8B — Leads
 
-Phase **8B.1** adds the `leads` table, RLS, `create_try_on_lead` RPC, and secure capture API routes. **8B.1 is closed** after remote runtime verification below. **8B.2** (public form + merchant dashboard) and **8C** are not started.
+Phase **8B.1** adds the `leads` table, RLS, `create_try_on_lead` RPC, and secure capture API routes. **8B.1 is closed** after remote runtime verification below. **8B.2** adds the optional public lead form and merchant `/dashboard/leads`. **8C** is not started.
 
 **No credentials, tokens, or private customer data belong in this document.**
 
@@ -240,9 +240,71 @@ npm audit --omit=dev --registry=https://registry.npmjs.org/
 
 Expected: **≥ 360** pgTAP tests, **≥ 130** unit tests, clean TypeScript, lint (acknowledged warnings only), production build on Next.js **16.2.11**, **0** production npm audit vulnerabilities.
 
+---
+
+## Phase 8B.2 — Public lead form and merchant dashboard
+
+### Scope
+
+- Optional shopper lead form on merchant `/try/[brandSlug]/[productSlug]` after a **completed** result (not `/demo`, not queued/processing/failed/cancelled/pending upload).
+- **GET** `/api/try-on/sessions/[sessionId]/lead` once when the eligible completed session is shown — response is exactly `{ "submitted": boolean }` (no `leadId`, no polling loop).
+- **POST** same route with Phase 8B.1 body contract; idempotency key from `crypto.randomUUID()` held across retries until success or explicit reset.
+- Merchant **`/dashboard/leads`**: owner and admin only (`canViewLeads` in `lib/leads/permissions.ts`); editor/analyst denied server-side and hidden from nav.
+- Server-side listing via authenticated Supabase client + RLS (`lib/leads/queries.ts`): pagination (25, max page 500), search (email/name/phone, escaped ilike), product UUID filter, inclusive date range (max 366 days).
+- Dismiss/reopen via `sessionStorage` key `dekhlo-lead-form-dismissed:{sessionId}` — dismissal flag only, no PII stored client-side.
+
+### Public UI behavior
+
+- Form appears below/beside the completed result; result view/download unchanged; submission never required.
+- Fields: optional full name, required email, optional phone, required contact consent naming the merchant, optional marketing consent (unchecked by default), honeypot `website`, hidden idempotency key.
+- Copy: heading “Share your details with {Brand Name}”; optional submission explained; privacy notice without inventing legal claims — **final legal/privacy wording pending counsel review**; no fake privacy-policy link when URL absent.
+- HTTP handling: 201/200 success (no lead ID shown to shopper), 409 safe conflict, 410 hide/disable form, 422 field errors, 429/401/404/500 sanitized messages; no raw API/database strings.
+- Accessibility: labels, autocomplete, `aria-describedby`, `aria-live` status, keyboard dismiss/reopen, responsive stacked layout.
+
+### Dashboard UI
+
+- Columns: created time, name, email, phone, product label (live name or allowlisted snapshot metadata), contact consent, marketing consent, source.
+- Omitted: metadata JSON, idempotency key, session/lead IDs in UI (internal React keys only), storage paths, tokens, IP/UA.
+- Passive `mailto:` / `tel:` from normalized values; no export, edit, delete, bulk actions, CRM, or campaigns.
+- `dynamic = "force-dynamic"` / no-store for PII; search terms may appear in query strings (merchant-entered only).
+
+### Code map (8B.2)
+
+| Area | Location |
+|------|----------|
+| Permissions | `lib/leads/permissions.ts` — `canViewLeads` |
+| Public form | `components/leads/lead-capture-form.tsx` |
+| Try-on integration | `components/ProductTryOn.tsx`, `app/try/[brandSlug]/[productSlug]/page.tsx` |
+| Dashboard page | `app/dashboard/leads/page.tsx` |
+| Filters | `components/leads/leads-filters.tsx`, `lib/leads/dashboard-params.ts` |
+| Queries | `lib/leads/queries.ts` |
+| Dismiss storage | `lib/leads/dismiss-storage.ts` |
+| Snapshot labels | `lib/leads/snapshot-labels.ts` |
+| Nav | `components/dashboard/dashboard-shell.tsx` |
+
+### Manual verification checklist (8B.2)
+
+Local or staging smoke (no real PII in notes):
+
+| Check | Expected |
+|-------|----------|
+| Completed merchant try-on shows optional lead form | Pass when result visible |
+| Result remains without submission | Pass |
+| Dismiss / reopen | Pass; storage has no PII |
+| First POST | 201; success state |
+| Refresh after submit | GET `submitted: true`; no duplicate row |
+| `/dashboard/leads` owner/admin | Sees lead; filters/pagination work |
+| Editor/analyst | Forbidden/not-found; nav link hidden |
+| `/demo` | No lead capture |
+| Lead POST | No credit, OpenAI, Inngest, or Storage side effects |
+
+### Automated verification (8B.2)
+
+Same commands as 8B.1; unit count increases with `tests/unit/phase8b-leads-ui.test.ts` and permission assertions in `phase8b-leads.test.ts`. pgTAP remains **360** (no new migrations in 8B.2).
+
 ## Out of scope (8B.1)
 
-- Public lead form UI
-- `/dashboard/leads`
+- Public lead form UI *(delivered in 8B.2)*
+- `/dashboard/leads` *(delivered in 8B.2)*
 - Email/CRM/export
 - Phase 8C observability

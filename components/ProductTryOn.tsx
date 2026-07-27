@@ -26,6 +26,7 @@ import {
   validatePersonPhotoFileSize,
   validatePersonPhotoMimeType,
 } from "@/lib/try-on/sessions/person-photo-resize";
+import { LeadCaptureForm } from "@/components/leads/lead-capture-form";
 import {
   computeSessionPollDelayMs,
   shouldContinueSessionPolling,
@@ -110,6 +111,7 @@ type ProductTryOnProps = {
   brandSlug: string;
   productSlug: string;
   productName: string;
+  brandName: string;
   productImageUrl: string;
 };
 
@@ -117,6 +119,7 @@ export function ProductTryOn({
   brandSlug,
   productSlug,
   productName,
+  brandName,
   productImageUrl,
 }: ProductTryOnProps) {
   const productKey = `${brandSlug}/${productSlug}`;
@@ -129,6 +132,7 @@ export function ProductTryOn({
   const [consentToStore, setConsentToStore] = useState(false);
   const [phase, setPhase] = useState<ProductTryOnPhase>("idle");
   const [currentResultUrl, setCurrentResultUrl] = useState<string | null>(null);
+  const [completedSessionId, setCompletedSessionId] = useState<string | null>(null);
   const [previousResultUrl, setPreviousResultUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -199,6 +203,7 @@ export function ProductTryOn({
   const handleChooseAnotherPhoto = useCallback(() => {
     pollAbortRef.current = true;
     setPersonFile(null);
+    setCompletedSessionId(null);
     setError(null);
     setUploaderKey((value) => value + 1);
     setPhase(phaseAfterChooseAnotherPhoto());
@@ -325,6 +330,7 @@ export function ProductTryOn({
 
       lastCompletedPhotoRef.current = { fingerprint, productKey };
       setCurrentResultUrl(pollPayload.resultUrl ?? null);
+      setCompletedSessionId(createPayload.sessionId);
       setPreviousResultUrl(null);
       setPhase("done");
     } catch (err) {
@@ -451,6 +457,9 @@ export function ProductTryOn({
               <a className="btn btn-secondary inline-flex" href={displayResultUrl} download="dekhlo-try-on.png">
                 Download result
               </a>
+              {phase === "done" && completedSessionId && displayResultUrl ? (
+                <LeadCaptureForm key={completedSessionId} sessionId={completedSessionId} brandName={brandName} />
+              ) : null}
             </div>
           ) : null}
         </section>

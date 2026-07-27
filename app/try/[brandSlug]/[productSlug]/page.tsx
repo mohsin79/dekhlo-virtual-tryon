@@ -35,6 +35,7 @@ export default async function TryOnProductPage({ params }: PageProps) {
         brandSlug={product.brandSlug}
         productSlug={product.productSlug}
         productName={product.productName}
+        brandName={product.brandName}
         productImageUrl={productImageUrl}
       />
     </div>

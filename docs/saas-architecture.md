@@ -221,7 +221,8 @@ Owner or admin invites → Resend email → invitee accepts → `brand_members` 
 | Permission | owner | admin | editor | analyst |
 |------------|:-----:|:-----:|:------:|:-------:|
 | View dashboard & analytics | ✓ | ✓ | ✓ | ✓ |
-| View try-on sessions & leads | ✓ | ✓ | ✓ | ✓ (read-only) |
+| View try-on sessions | ✓ | ✓ | ✓ | ✓ (read-only) |
+| View leads (shopper PII) | ✓ | ✓ | — | — |
 | Manage products (CRUD) | ✓ | ✓ | ✓ | — |
 | Upload product images | ✓ | ✓ | ✓ | — |
 | Edit brand settings & widget | ✓ | ✓ | — | — |

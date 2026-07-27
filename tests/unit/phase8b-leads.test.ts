@@ -15,6 +15,15 @@ describe("lead permissions", () => {
     assert.equal(canViewLeads("editor"), false);
     assert.equal(canViewLeads("analyst"), false);
   });
+
+  it("does not treat platform role as merchant lead access", () => {
+    assert.equal(canViewLeads(null), false);
+    assert.equal(canViewLeads(undefined), false);
+  });
+
+  it("denies unknown brand roles", () => {
+    assert.equal(canViewLeads("unknown" as "owner"), false);
+  });
 });
 
 describe("lead normalization", () => {
