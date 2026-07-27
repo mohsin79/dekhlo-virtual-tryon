@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { buildLoginRedirectPath, sanitizeRedirectPath } from "@/lib/auth/safe-redirect";
 import { getSupabasePublishableKey, getSupabaseUrl } from "@/lib/env";
 
-const PROTECTED_PREFIXES = ["/dashboard", "/onboarding"] as const;
+const PROTECTED_PREFIXES = ["/dashboard", "/onboarding", "/platform"] as const;
 const AUTH_ENTRY_PATHS = ["/auth/login", "/auth/sign-up"] as const;
 
 function isProtectedPath(pathname: string): boolean {

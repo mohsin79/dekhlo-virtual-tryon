@@ -1,6 +1,117 @@
-# Supabase Phase 8A.1 — Platform administration database security foundation
+# Supabase Phase 8A — Platform administration
 
-Phase 8A.1 adds the database layer for platform administration: `platform_role`, append-only `audit_logs`, extended credit transaction types, and `admin_grant_brand_credits` / `admin_revoke_brand_credits` RPCs. **No platform UI, API routes, leads, Sentry, or PostHog** in this slice.
+Phase **8A.1** adds the database layer. Phase **8A.2** adds the platform operator UI and secure server APIs. **No leads, Sentry, or PostHog** in Phase 8A.
+
+**No credentials, tokens, or private user data belong in this document.**
+
+## Phase 8A.2 — Application UI and APIs
+
+### Authorization flow
+
+1. `proxy.ts` redirects unauthenticated `/platform/*` requests to login (supplemental only).
+2. `requirePlatformAdmin("/platform")` in `app/platform/layout.tsx` is the security boundary:
+   - unauthenticated → login redirect with sanitized `next`
+   - authenticated non-`platform_admin` → `notFound()` (404)
+3. Credit mutation APIs repeat authentication + platform profile checks before RPC calls.
+4. `p_actor` is always `auth.uid()` on the server; browser payloads must not include actor fields.
+
+Module: `lib/platform/require-platform-admin.ts`
+
+### Platform routes
+
+| Route | Purpose |
+|-------|---------|
+| `/platform` | Aggregates + recent audit |
+| `/platform/brands` | Searchable/paginated brand directory |
+| `/platform/brands/[brandId]` | Brand detail, grant/revoke forms |
+| `/platform/audit` | Paginated audit log with filters |
+
+Shell: `components/platform/platform-shell.tsx` — **Dekhlo Platform Administration** (distinct from merchant dashboard).
+
+### Credit API contracts
+
+`POST /api/platform/credits/grant`  
+`POST /api/platform/credits/revoke`
+
+Request JSON (strict):
+
+- `brandId` (uuid)
+- `amount` (positive integer, max `1_000_000`)
+- `reason` (trimmed, 1–500 chars)
+- `idempotencyKey` (trimmed, 1–128 chars)
+
+Forbidden body keys (rejected): `actor`, `actorId`, `actorUserId`, `platformRole`, credit counter fields.
+
+Success / valid replay (**200**, `Cache-Control: no-store`):
+
+```json
+{
+  "transactionId": "uuid",
+  "auditLogId": "uuid",
+  "brandId": "uuid",
+  "grantedCredits": 0,
+  "reservedCredits": 0,
+  "consumedCredits": 0,
+  "availableCredits": 0,
+  "wasCreated": true
+}
+```
+
+Errors:
+
+| Status | When |
+|--------|------|
+| 400 | Malformed JSON, validation |
+| 401 | Unauthenticated |
+| 403 | Non-platform user or bad origin |
+| 404 | Unknown brand (RPC) |
+| 409 | Idempotency conflict |
+| 415 | Non-JSON content type |
+| 422 | Revoke exceeds available granted credits |
+| 500 | Sanitized unexpected failure |
+
+Implementation: `lib/platform/handle-credit-mutation.ts` → `createAdminClient().rpc(...)` only.
+
+### Actor derivation
+
+Server sets `p_actor` to the authenticated user id after `loadPlatformAdminProfile` confirms `platform_role = platform_admin`. RPCs re-verify platform admin status.
+
+### Safe metadata formatting
+
+`lib/platform/audit-format.ts` allowlists audit/transaction metadata keys (`amount`, `operation`, `actor_user_id`, `balance_before`, `balance_after`, `transaction_type`). Unknown keys, secrets, tokens, and storage paths are omitted from UI summaries.
+
+### Server / admin client boundaries
+
+| Use case | Client |
+|----------|--------|
+| Platform admin session + `audit_logs` SELECT (future direct reads) | Authenticated server client + RLS |
+| Cross-tenant aggregates (brands, balances, sessions counts) | `createAdminClient()` after `requirePlatformAdmin` |
+| `admin_grant_brand_credits` / `admin_revoke_brand_credits` | `createAdminClient()` only |
+
+No service-role data is passed to client components. Platform pages are `dynamic = "force-dynamic"`.
+
+### Remote runtime verification checklist (8A.2)
+
+- [ ] Unauthenticated `/platform` → login
+- [ ] Merchant-only user → cannot access platform pages
+- [ ] Platform admin can open overview, brands, audit, brand detail
+- [ ] Grant + idempotent replay on Test Brand
+- [ ] Revoke + excessive revoke safe error
+- [ ] Audit entries visible after operations
+- [ ] Merchant `/dashboard`, `/demo`, `/try/...` unchanged
+
+### Deployment (8A.2)
+
+1. Deploy application with Phase 8A.1 migrations already applied.
+2. Ensure at least one bootstrapped `platform_admin` profile exists (8A.1 procedure).
+3. No new environment variables for 8A.2.
+4. Smoke-test platform routes and credit APIs in staging before production.
+
+---
+
+## Phase 8A.1 — Database security foundation
+
+Phase 8A.1 adds the database layer: `platform_role`, append-only `audit_logs`, extended credit transaction types, and `admin_grant_brand_credits` / `admin_revoke_brand_credits` RPCs.
 
 **No credentials, tokens, or private user data belong in this document.**
 
@@ -219,6 +330,6 @@ npx supabase gen types typescript --local > lib/supabase/database.types.ts
 - Sentry, PostHog (Phase 8C)
 - Changes to OpenAI, Inngest, try-on generation, polling, or cleanup
 
-## Phase 8A.1 status
+## Phase 8A status
 
-Database foundation implemented and covered by pgTAP. Proceed to **8A.2** for server routes and platform UI.
+**8A.1** database foundation and **8A.2** platform UI/APIs are implemented in-repo. Proceed to **Phase 8B** (leads) or **8C** (observability) when approved.
