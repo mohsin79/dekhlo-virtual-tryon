@@ -90,16 +90,6 @@ Server sets `p_actor` to the authenticated user id after `loadPlatformAdminProfi
 
 No service-role data is passed to client components. Platform pages are `dynamic = "force-dynamic"`.
 
-### Remote runtime verification checklist (8A.2)
-
-- [ ] Unauthenticated `/platform` → login
-- [ ] Merchant-only user → cannot access platform pages
-- [ ] Platform admin can open overview, brands, audit, brand detail
-- [ ] Grant + idempotent replay on Test Brand
-- [ ] Revoke + excessive revoke safe error
-- [ ] Audit entries visible after operations
-- [ ] Merchant `/dashboard`, `/demo`, `/try/...` unchanged
-
 ### Deployment (8A.2)
 
 1. Deploy application with Phase 8A.1 migrations already applied.
@@ -332,4 +322,106 @@ npx supabase gen types typescript --local > lib/supabase/database.types.ts
 
 ## Phase 8A status
 
-**8A.1** database foundation and **8A.2** platform UI/APIs are implemented in-repo. Proceed to **Phase 8B** (leads) or **8C** (observability) when approved.
+**Phase 8A is closed.** The database foundation (8A.1), platform UI and secure APIs (8A.2), automated tests, and manual runtime verification below are complete. **Phase 8B** (leads) and **Phase 8C** (observability) are not started.
+
+---
+
+## Phase 8A runtime verification (manual)
+
+Recorded after linked Supabase project and application smoke tests. No real identifiers, tokens, or customer data appear in this section.
+
+### Phase 8A.1 — remote database verification (passed)
+
+All checks were executed against the linked Supabase project with Phase 8A migrations applied.
+
+| Check | Result |
+|-------|--------|
+| All five Phase 8A migrations applied successfully | Pass |
+| Operator profile bootstrapped as `platform_admin` | Pass |
+| `is_platform_admin` returned true for the operator | Pass |
+| `is_platform_admin` returned false for a normal user | Pass |
+| Platform-admin credit grant succeeded | Pass |
+| Identical grant replay returned `was_created` false | Pass |
+| Grant replay with changed payload rejected (idempotency conflict) | Pass |
+| Platform-admin credit revoke succeeded | Pass |
+| Identical revoke replay returned `was_created` false | Pass |
+| Test Brand balance restored after grant and revoke | Pass |
+| Each operation created exactly one credit transaction | Pass |
+| Each operation created exactly one paired audit log | Pass |
+| Audit-log UPDATE rejected | Pass |
+| Audit-log DELETE rejected | Pass |
+| Non-platform actor rejected | Pass |
+| Unauthorized attempt created zero credit transactions | Pass |
+| Unauthorized attempt created zero audit logs | Pass |
+| No partial balance mutation on unauthorized attempt | Pass |
+
+### Phase 8A.2 — application runtime verification (passed)
+
+Application checks used a bootstrapped platform administrator, Test Brand, and a normal non-platform merchant user.
+
+| Check | Result |
+|-------|--------|
+| Unauthenticated `/platform` redirected safely to login | Pass |
+| Platform administrator could access `/platform` | Pass |
+| Platform overview aggregates rendered correctly | Pass |
+| `/platform/brands` rendered correctly | Pass |
+| Brand search worked | Pass |
+| Test Brand detail page rendered | Pass |
+| Credit balances were correct | Pass |
+| Credit transaction history rendered | Pass |
+| Brand audit history rendered | Pass |
+| Grant form succeeded | Pass |
+| Browser grant payload contained only `brandId`, `amount`, `reason`, `idempotencyKey` | Pass |
+| Browser payload did not contain actor, actorId, actorUserId, platformRole, or credit counter fields | Pass |
+| Grant API returned HTTP 200 | Pass |
+| Grant response returned `wasCreated` true (first operation) | Pass |
+| Grant response contained only safe IDs and credit counters | Pass |
+| `admin_grant` appeared in credit history | Pass |
+| `credit.admin_grant` appeared in audit history | Pass |
+| Excessive revoke was safely prevented | Pass |
+| Revoke succeeded | Pass |
+| `admin_revoke` appeared in credit history | Pass |
+| `credit.admin_revoke` appeared in audit history | Pass |
+| Final credit balance was restored | Pass |
+| `/platform/audit` displayed both actions | Pass |
+| Audit filters worked | Pass |
+| Raw arbitrary JSON was not displayed | Pass |
+| No tokens, cookies, signed URLs, or storage paths exposed | Pass |
+| Normal non-platform user received 404 on platform routes | Pass |
+| No platform data exposed to the normal user | Pass |
+| Merchant dashboard still loaded | Pass |
+| `/demo` still loaded | Pass |
+| Public `/try` route still loaded | Pass |
+| Phase 7 asynchronous generation and cleanup behavior unchanged | Pass |
+
+### Safe grant/revoke response example (illustrative)
+
+Example counter fields only (IDs omitted by design):
+
+```json
+{
+  "grantedCredits": 6,
+  "reservedCredits": 0,
+  "consumedCredits": 4,
+  "availableCredits": 2,
+  "wasCreated": true
+}
+```
+
+Successful responses also include `transactionId`, `auditLogId`, and `brandId` as UUIDs; those values were verified in runtime testing but are not recorded here.
+
+### Automated verification (regression)
+
+Re-run after doc-only changes:
+
+```bash
+npm run test:unit
+npx supabase db reset --local
+npx supabase test db --local
+npx tsc --noEmit
+npm run lint
+npm run build
+npm audit --omit=dev --registry=https://registry.npmjs.org/
+```
+
+Expected: **≥ 101** unit tests, **332** pgTAP tests, clean TypeScript, lint (acknowledged warnings only), production build on Next.js **16.2.11**, **0** production npm audit vulnerabilities.
