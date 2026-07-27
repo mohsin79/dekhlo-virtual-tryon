@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 type RateLimitResult = {
   success: boolean;
   limit?: number;
@@ -88,10 +90,37 @@ async function createUpstashLimiter(
   };
 }
 
+let leadSessionLimiterPromise: Promise<RateLimiter> | null = null;
+let leadIpLimiterPromise: Promise<RateLimiter> | null = null;
+let leadGlobalLimiterPromise: Promise<RateLimiter> | null = null;
+
 let sessionCreateLimiterPromise: Promise<RateLimiter> | null = null;
 let demoIpLimiterPromise: Promise<RateLimiter> | null = null;
 let demoCookieLimiterPromise: Promise<RateLimiter> | null = null;
 let demoGlobalLimiterPromise: Promise<RateLimiter> | null = null;
+
+function hashLeadRateLimitIp(ip: string): string {
+  const salt = process.env.LEAD_RATE_LIMIT_IP_SALT ?? process.env.UPSTASH_REDIS_REST_TOKEN ?? "dekhlo-lead-dev-salt";
+
+  return createHash("sha256").update(`${salt}:${ip}`).digest("hex");
+}
+
+export async function limitLeadCaptureBySession(sessionId: string): Promise<RateLimitResult> {
+  leadSessionLimiterPromise ??= createUpstashLimiter(5, "1 h", "lead-session");
+  return leadSessionLimiterPromise.then((limiter) => limiter.limit(sessionId));
+}
+
+export async function limitLeadCaptureByIp(request: Request): Promise<RateLimitResult> {
+  const ip = getClientIp(request);
+  const hashed = hashLeadRateLimitIp(ip);
+  leadIpLimiterPromise ??= createUpstashLimiter(30, "1 h", "lead-ip");
+  return leadIpLimiterPromise.then((limiter) => limiter.limit(hashed));
+}
+
+export async function limitLeadCaptureGlobal(): Promise<RateLimitResult> {
+  leadGlobalLimiterPromise ??= createUpstashLimiter(200, "1 h", "lead-global");
+  return leadGlobalLimiterPromise.then((limiter) => limiter.limit("global"));
+}
 
 export async function limitSessionCreation(ip: string): Promise<RateLimitResult> {
   sessionCreateLimiterPromise ??= createUpstashLimiter(20, "1 h", "tryon-session-create");

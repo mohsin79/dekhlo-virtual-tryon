@@ -1,4 +1,4 @@
-export type Json =
+﻿export type Json =
   | string
   | number
   | boolean
@@ -264,6 +264,93 @@ export type Database = {
             foreignKeyName: "credit_transactions_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
+            referencedRelation: "try_on_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      leads: {
+        Row: {
+          brand_id: string
+          consent_to_contact: boolean
+          consent_to_marketing: boolean
+          consented_at: string
+          created_at: string
+          email: string
+          full_name: string | null
+          id: string
+          idempotency_key: string
+          metadata: Json
+          phone: string | null
+          product_id: string
+          source: string
+          try_on_session_id: string
+        }
+        Insert: {
+          brand_id: string
+          consent_to_contact: boolean
+          consent_to_marketing?: boolean
+          consented_at: string
+          created_at?: string
+          email: string
+          full_name?: string | null
+          id?: string
+          idempotency_key: string
+          metadata?: Json
+          phone?: string | null
+          product_id: string
+          source?: string
+          try_on_session_id: string
+        }
+        Update: {
+          brand_id?: string
+          consent_to_contact?: boolean
+          consent_to_marketing?: boolean
+          consented_at?: string
+          created_at?: string
+          email?: string
+          full_name?: string | null
+          id?: string
+          idempotency_key?: string
+          metadata?: Json
+          phone?: string | null
+          product_id?: string
+          source?: string
+          try_on_session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leads_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "public_catalog_products"
+            referencedColumns: ["brand_id"]
+          },
+          {
+            foreignKeyName: "leads_brand_product_fkey"
+            columns: ["brand_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["brand_id", "id"]
+          },
+          {
+            foreignKeyName: "leads_try_on_session_id_fkey"
+            columns: ["try_on_session_id"]
+            isOneToOne: true
+            referencedRelation: "merchant_try_on_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leads_try_on_session_id_fkey"
+            columns: ["try_on_session_id"]
+            isOneToOne: true
             referencedRelation: "try_on_sessions"
             referencedColumns: ["id"]
           },
@@ -591,6 +678,22 @@ export type Database = {
       create_brand_with_owner: {
         Args: { p_name: string; p_slug: string }
         Returns: string
+      }
+      create_try_on_lead: {
+        Args: {
+          p_consent_to_contact: boolean
+          p_consent_to_marketing: boolean
+          p_email: string
+          p_full_name: string
+          p_idempotency_key: string
+          p_metadata: Json
+          p_phone: string
+          p_session_id: string
+        }
+        Returns: {
+          lead_id: string
+          was_created: boolean
+        }[]
       }
       get_public_product_by_slugs: {
         Args: { p_brand_slug: string; p_product_slug: string }
