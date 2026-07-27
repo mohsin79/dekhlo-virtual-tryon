@@ -17,8 +17,9 @@ Phase **8B.1** adds the `leads` table, RLS, `create_try_on_lead` RPC, and secure
 ### Authorization
 
 - Shoppers use the existing **httpOnly try-on session cookie** (`try_on_session_{sessionId}`), not Supabase login.
-- `authorizeTryOnSessionForLead` returns a **generic 404** for missing/invalid session/token (enumeration-resistant).
-- Valid token + expired or soft-deleted session → **410**.
+- **Missing cookie** → **401** (`Session access is required.`).
+- **Invalid session id (route), unknown session, wrong token** → **404** with generic message (`This request could not be completed.`) — enumeration-resistant.
+- **Valid token** + expired or soft-deleted session → **410**.
 - RPC re-validates session eligibility under row lock.
 
 ### API routes
@@ -26,15 +27,49 @@ Phase **8B.1** adds the `leads` table, RLS, `create_try_on_lead` RPC, and secure
 | Method | Route | Purpose |
 |--------|-------|---------|
 | `POST` | `/api/try-on/sessions/[sessionId]/lead` | Create lead (201) or idempotent replay (200) |
-| `GET` | `/api/try-on/sessions/[sessionId]/lead` | `{ submitted: boolean, leadId? }` |
+| `GET` | `/api/try-on/sessions/[sessionId]/lead` | Lead submission status only |
 
 Not available on `/demo`.
+
+All responses use `Cache-Control: no-store`.
+
+#### GET response (exact fields)
+
+```json
+{ "submitted": true }
+```
+
+```json
+{ "submitted": false }
+```
+
+No `leadId`, PII, metadata, or internal identifiers in GET responses.
+
+#### POST response (exact fields)
+
+```json
+{
+  "leadId": "uuid",
+  "wasCreated": true
+}
+```
+
+Idempotent replay uses **HTTP 200** with `"wasCreated": false`.
 
 ### POST body (strict JSON, max 4096 bytes)
 
 - `fullName`, `email`, `phone`, `consentToContact` (must be `true`), `consentToMarketing` (optional, default false), `idempotencyKey` (UUID), `website` (honeypot, must be empty)
 
 Server derives brand, product, source, `consented_at`, and allowlisted metadata snapshot.
+
+### Rate limiting
+
+Lead capture uses Upstash (same infrastructure as demo/session limits). Client IPs are hashed with **`LEAD_RATE_LIMIT_HASH_SECRET`** (server-only, never `NEXT_PUBLIC_*`, not derived from Supabase/OpenAI/Inngest/Upstash credentials).
+
+- **Production:** missing `LEAD_RATE_LIMIT_HASH_SECRET` → fail closed (request handling throws before rate-limit key derivation).
+- **Development/test:** non-production fallback secret for local runs; unit tests inject secrets explicitly where needed.
+
+Documented in `.env.example` without sample values.
 
 ### Stable RPC error identifiers
 
@@ -56,7 +91,17 @@ Server derives brand, product, source, `consented_at`, and allowlisted metadata 
 | editor | no |
 | analyst | no |
 
-`platform_admin` does not bypass merchant RLS.
+`platform_admin` does not bypass merchant RLS without owner/admin brand membership.
+
+### Database grants (summary)
+
+| Client | leads table | `create_try_on_lead` |
+|--------|-------------|----------------------|
+| anon | no access | no EXECUTE |
+| authenticated | SELECT via owner/admin RLS only | no EXECUTE |
+| service_role | ALL (server/RPC) | EXECUTE |
+
+Leads are immutable (`UPDATE`/`DELETE` rejected).
 
 ### PII retention (product note)
 
@@ -75,17 +120,11 @@ npm run build
 
 pgTAP: `018_phase8b_leads_schema.test.sql`, `019_phase8b_leads_rls.test.sql`.
 
-Regenerate types after schema changes:
-
-```bash
-npx supabase gen types typescript --local > lib/supabase/database.types.ts
-```
-
 ### Deployment
 
 1. Apply migrations locally and run pgTAP.
-2. **Do not push to remote until approved** (8B.1 local-only per current rollout).
-3. Deploy application with capture routes; no new required env vars (`LEAD_RATE_LIMIT_IP_SALT` optional).
+2. **Do not push to remote until approved.**
+3. Set **`LEAD_RATE_LIMIT_HASH_SECRET`** in production before enabling lead capture traffic.
 
 ## Out of scope (8B.1)
 

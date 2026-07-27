@@ -14,6 +14,7 @@ import {
   LEAD_UNAVAILABLE_MESSAGE,
 } from "@/lib/leads/constants";
 import { mapLeadRpcError } from "@/lib/leads/lead-api-errors";
+import { buildLeadGetResponse, buildLeadPostResponse } from "@/lib/leads/public-response";
 import { buildLeadSnapshotMetadata } from "@/lib/leads/snapshot-metadata";
 import { parseLeadCaptureBody } from "@/lib/leads/validation";
 import {
@@ -129,13 +130,9 @@ export async function handleLeadCapturePost(
     return genericErrorResponse("Unable to submit lead.", 500);
   }
 
-  return jsonNoStore(
-    {
-      leadId: row.lead_id,
-      wasCreated: row.was_created,
-    },
-    { status: row.was_created ? 201 : 200 },
-  );
+  return jsonNoStore(buildLeadPostResponse(row.lead_id, row.was_created), {
+    status: row.was_created ? 201 : 200,
+  });
 }
 
 export async function handleLeadCaptureGet(sessionId: string): Promise<NextResponse> {
@@ -154,7 +151,7 @@ export async function handleLeadCaptureGet(sessionId: string): Promise<NextRespo
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("leads")
-    .select("id")
+    .select("try_on_session_id")
     .eq("try_on_session_id", auth.value.session.id)
     .maybeSingle();
 
@@ -162,12 +159,7 @@ export async function handleLeadCaptureGet(sessionId: string): Promise<NextRespo
     return genericErrorResponse("Unable to load lead status.", 500);
   }
 
-  if (!data) {
-    return jsonNoStore({ submitted: false });
-  }
+  const submitted = data != null;
 
-  return jsonNoStore({
-    submitted: true,
-    leadId: data.id,
-  });
+  return jsonNoStore(buildLeadGetResponse(submitted));
 }

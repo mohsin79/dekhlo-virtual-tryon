@@ -62,3 +62,27 @@ export function getSiteUrl(): string {
 
   throw new Error("Missing or invalid NEXT_PUBLIC_SITE_URL.");
 }
+
+type LeadRateLimitEnv = {
+  LEAD_RATE_LIMIT_HASH_SECRET?: string;
+  NODE_ENV?: string;
+};
+
+/** Server-only pepper for hashing client IPs in lead capture rate limits. Never expose publicly. */
+export function resolveLeadRateLimitHashSecret(env: LeadRateLimitEnv = process.env): string {
+  const value = env.LEAD_RATE_LIMIT_HASH_SECRET?.trim();
+
+  if (value) {
+    return value;
+  }
+
+  if (env.NODE_ENV === "production") {
+    throw new Error("Missing LEAD_RATE_LIMIT_HASH_SECRET.");
+  }
+
+  return "dekhlo-lead-dev-only-hash-secret";
+}
+
+export function getLeadRateLimitHashSecret(): string {
+  return resolveLeadRateLimitHashSecret(process.env);
+}

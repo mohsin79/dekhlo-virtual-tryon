@@ -1,6 +1,7 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
+import { getLeadRateLimitHashSecret } from "@/lib/env";
+import { hashLeadRateLimitIp } from "@/lib/rate-limit/lead-ip-hash";
 
 type RateLimitResult = {
   success: boolean;
@@ -99,10 +100,8 @@ let demoIpLimiterPromise: Promise<RateLimiter> | null = null;
 let demoCookieLimiterPromise: Promise<RateLimiter> | null = null;
 let demoGlobalLimiterPromise: Promise<RateLimiter> | null = null;
 
-function hashLeadRateLimitIp(ip: string): string {
-  const salt = process.env.LEAD_RATE_LIMIT_IP_SALT ?? process.env.UPSTASH_REDIS_REST_TOKEN ?? "dekhlo-lead-dev-salt";
-
-  return createHash("sha256").update(`${salt}:${ip}`).digest("hex");
+function resolveLeadRateLimitIpHash(ip: string): string {
+  return hashLeadRateLimitIp(ip, getLeadRateLimitHashSecret());
 }
 
 export async function limitLeadCaptureBySession(sessionId: string): Promise<RateLimitResult> {
@@ -112,7 +111,7 @@ export async function limitLeadCaptureBySession(sessionId: string): Promise<Rate
 
 export async function limitLeadCaptureByIp(request: Request): Promise<RateLimitResult> {
   const ip = getClientIp(request);
-  const hashed = hashLeadRateLimitIp(ip);
+  const hashed = resolveLeadRateLimitIpHash(ip);
   leadIpLimiterPromise ??= createUpstashLimiter(30, "1 h", "lead-ip");
   return leadIpLimiterPromise.then((limiter) => limiter.limit(hashed));
 }

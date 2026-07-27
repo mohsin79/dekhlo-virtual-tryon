@@ -3,13 +3,14 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET search_path TO extensions, public, auth;
 
-SELECT plan(7);
+SELECT plan(12);
 
 SELECT tests.create_auth_user('11111111-1111-1111-1111-111111111111'::uuid, 'owner-a@test.local', 'Owner A');
 SELECT tests.create_auth_user('22222222-2222-2222-2222-222222222222'::uuid, 'admin-a@test.local', 'Admin A');
 SELECT tests.create_auth_user('33333333-3333-3333-3333-333333333333'::uuid, 'editor-a@test.local', 'Editor A');
 SELECT tests.create_auth_user('44444444-4444-4444-4444-444444444444'::uuid, 'analyst-a@test.local', 'Analyst A');
 SELECT tests.create_auth_user('55555555-5555-5555-5555-555555555555'::uuid, 'owner-b@test.local', 'Owner B');
+SELECT tests.create_auth_user('66666666-6666-6666-6666-666666666666'::uuid, 'platform@test.local', 'Platform Only');
 
 SELECT tests.seed_brand(
   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
@@ -185,6 +186,60 @@ SELECT throws_ok(
   '42501',
   NULL,
   'authenticated cannot insert leads directly'
+);
+
+SET LOCAL role service_role;
+SELECT tests.assign_platform_admin('66666666-6666-6666-6666-666666666666'::uuid);
+
+SELECT tests.set_jwt_claims('66666666-6666-6666-6666-666666666666'::uuid);
+SET LOCAL role authenticated;
+
+SELECT is(
+  (SELECT count(*)::bigint FROM public.leads WHERE brand_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid),
+  0::bigint,
+  'platform_admin without brand membership cannot read merchant leads'
+);
+
+SELECT function_privs_are(
+  'public',
+  'create_try_on_lead',
+  ARRAY['uuid', 'text', 'text', 'text', 'boolean', 'boolean', 'uuid', 'jsonb'],
+  'anon',
+  ARRAY[]::text[],
+  'anon cannot execute create_try_on_lead'
+);
+
+SELECT function_privs_are(
+  'public',
+  'create_try_on_lead',
+  ARRAY['uuid', 'text', 'text', 'text', 'boolean', 'boolean', 'uuid', 'jsonb'],
+  'authenticated',
+  ARRAY[]::text[],
+  'authenticated cannot execute create_try_on_lead'
+);
+
+SELECT tests.set_jwt_claims('11111111-1111-1111-1111-111111111111'::uuid);
+SET LOCAL role authenticated;
+
+SELECT throws_ok(
+  $$
+    UPDATE public.leads
+    SET email = 'changed@example.com'
+    WHERE brand_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid
+  $$,
+  '42501',
+  NULL,
+  'authenticated cannot update leads'
+);
+
+SELECT throws_ok(
+  $$
+    DELETE FROM public.leads
+    WHERE brand_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid
+  $$,
+  '42501',
+  NULL,
+  'authenticated cannot delete leads'
 );
 
 SELECT * FROM finish();
