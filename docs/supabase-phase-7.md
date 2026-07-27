@@ -252,7 +252,7 @@ Temporary local test hooks used only for retry/final-failure manual runs were **
 
 ### npm audit (`npm audit --omit=dev`)
 
-Run date: **2026-07-26** (after Phase 7 close verification).
+**Initial run (2026-07-26, Phase 7 close):**
 
 | Field | Value |
 |-------|--------|
@@ -263,9 +263,11 @@ Run date: **2026-07-26** (after Phase 7 close verification).
 
 **Inngest-related chain:** `inngest@4.13.0` → OpenTelemetry GCP detector → `gcp-metadata` → `gaxios` → vulnerable `glob`/`minimatch`/`brace-expansion`/`rimraf` versions. These advisories are **introduced or reachable via the Inngest 4.x dependency tree** (not present before Inngest was added in Phase 7).
 
-**Previously acknowledged transitive advisories (unchanged):** `postcss` and `sharp` bundled/transitive under **`next@16.2.11`** (same class of Next.js/PostCSS/Sharp issues documented in earlier phases; `npm audit fix --force` would downgrade Next and is **not** applied).
+**Next.js transitive chain:** `next@16.2.11` → nested `postcss@8.4.31`; optional `sharp@0.34.5`. `npm audit fix --force` would install **`next@9.3.3`** — **not applied**.
 
-Do **not** run `npm audit fix` or `npm audit fix --force` as part of Phase 7 close.
+**Post–Phase 7 production remediation (2026-07-27):** See `docs/dependency-security-review-2026-07.md`. After scoped overrides and lockfile dedupe (`postcss@8.5.21`, `sharp@0.35.0`, `gaxios` → `rimraf@6`, `minimatch@10` → `brace-expansion@5.0.8`), **`npm audit --omit=dev` exit code 0** with **0 high** production findings. No force-fix or framework downgrade. Dev-only ESLint/minimatch@3 advisories may still appear in a full `npm audit` (includes devDependencies).
+
+Do **not** run blind `npm audit fix` or `npm audit fix --force` without the review in `docs/dependency-security-review-2026-07.md`.
 
 ### Production Inngest Cloud
 
