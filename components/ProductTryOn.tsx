@@ -26,11 +26,18 @@ import {
   validatePersonPhotoFileSize,
   validatePersonPhotoMimeType,
 } from "@/lib/try-on/sessions/person-photo-resize";
-import { LeadCaptureForm } from "@/components/leads/lead-capture-form";
 import {
-  computeSessionPollDelayMs,
-  shouldContinueSessionPolling,
-} from "@/lib/try-on/sessions/session-polling";
+  clearActiveTryOnSessionId,
+  readActiveTryOnSessionId,
+  writeActiveTryOnSessionId,
+} from "@/lib/try-on/sessions/active-session-storage";
+import { pollTryOnSessionUntilTerminal } from "@/lib/try-on/sessions/client-session-polling";
+import {
+  buildTryOnSessionStatusUrl,
+  evaluateSessionRestoreResponse,
+  isValidTryOnSessionId,
+} from "@/lib/try-on/sessions/session-restoration";
+import { LeadCaptureForm } from "@/components/leads/lead-capture-form";
 import type { Database } from "@/lib/supabase/database.types";
 
 type TryOnSessionStatus = Database["public"]["Enums"]["try_on_session_status"];
@@ -47,57 +54,6 @@ type AttemptState = {
   sessionId: string | null;
   sessionStatus: TryOnSessionStatus | null;
 };
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function pollSessionUntilTerminal(
-  sessionId: string,
-  isCancelled: () => boolean,
-): Promise<SessionPollPayload> {
-  let attempt = 0;
-
-  while (!isCancelled()) {
-    const response = await fetch(`/api/try-on/sessions/${sessionId}`, {
-      method: "GET",
-      cache: "no-store",
-    });
-
-    const payload = (await response.json().catch(() => null)) as SessionPollPayload | null;
-
-    if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 410) {
-      throw new Error(payload?.error ?? "This session is no longer available.");
-    }
-
-    if (!response.ok && response.status !== 503) {
-      throw new Error(payload?.error ?? "Unable to check try-on status.");
-    }
-
-    const status = payload?.status;
-
-    if (status === "completed") {
-      if (!payload?.resultUrl) {
-        throw new Error("Try-on completed without a result.");
-      }
-
-      return payload;
-    }
-
-    if (status === "failed" || status === "cancelled") {
-      throw new Error(payload?.sanitizedErrorMessage ?? payload?.error ?? "Try-on generation failed.");
-    }
-
-    if (status && !shouldContinueSessionPolling(status)) {
-      throw new Error("Try-on is in an unexpected state.");
-    }
-
-    await sleep(computeSessionPollDelayMs(attempt));
-    attempt += 1;
-  }
-
-  throw new Error("Try-on polling was cancelled.");
-}
 
 function createInitialAttemptState(): AttemptState {
   return {
@@ -141,6 +97,106 @@ export function ProductTryOn({
       pollAbortRef.current = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const restoreActiveSession = async () => {
+      const savedSessionId = readActiveTryOnSessionId(brandSlug, productSlug);
+
+      if (!savedSessionId) {
+        return;
+      }
+
+      if (!isValidTryOnSessionId(savedSessionId)) {
+        clearActiveTryOnSessionId(brandSlug, productSlug);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          buildTryOnSessionStatusUrl(savedSessionId, brandSlug, productSlug),
+          {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
+
+        const payload = (await response.json().catch(() => null)) as SessionPollPayload | null;
+
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+
+        const outcome = evaluateSessionRestoreResponse({
+          httpStatus: response.status,
+          status: payload?.status,
+          resultUrl: payload?.resultUrl,
+        });
+
+        if (outcome.kind === "clear") {
+          clearActiveTryOnSessionId(brandSlug, productSlug);
+          return;
+        }
+
+        attemptRef.current = {
+          ...attemptRef.current,
+          sessionId: savedSessionId,
+          sessionStatus: outcome.kind === "completed" ? "completed" : outcome.status,
+        };
+
+        if (outcome.kind === "completed") {
+          setCurrentResultUrl(outcome.resultUrl);
+          setCompletedSessionId(savedSessionId);
+          setPreviousResultUrl(null);
+          setPhase("done");
+          return;
+        }
+
+        pollAbortRef.current = false;
+        setPhase("polling");
+
+        const pollPayload = await pollTryOnSessionUntilTerminal({
+          sessionId: savedSessionId,
+          brandSlug,
+          productSlug,
+          isCancelled: () => cancelled || pollAbortRef.current,
+          signal: controller.signal,
+        });
+
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+
+        if (pollPayload.status === "completed" && pollPayload.resultUrl) {
+          attemptRef.current = {
+            ...attemptRef.current,
+            sessionStatus: "completed",
+          };
+          setCurrentResultUrl(pollPayload.resultUrl);
+          setCompletedSessionId(savedSessionId);
+          setPreviousResultUrl(null);
+          setPhase("done");
+          return;
+        }
+
+        clearActiveTryOnSessionId(brandSlug, productSlug);
+      } catch {
+        if (!cancelled && !controller.signal.aborted) {
+          clearActiveTryOnSessionId(brandSlug, productSlug);
+        }
+      }
+    };
+
+    void restoreActiveSession();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [brandSlug, productSlug]);
 
   const mintClientRequestIdIfNeeded = useCallback(() => {
     if (
@@ -202,12 +258,13 @@ export function ProductTryOn({
 
   const handleChooseAnotherPhoto = useCallback(() => {
     pollAbortRef.current = true;
+    clearActiveTryOnSessionId(brandSlug, productSlug);
     setPersonFile(null);
     setCompletedSessionId(null);
     setError(null);
     setUploaderKey((value) => value + 1);
     setPhase(phaseAfterChooseAnotherPhoto());
-  }, []);
+  }, [brandSlug, productSlug]);
 
   const startTryOn = useCallback(async () => {
     if (!personFile || !canStartProductTryOnGeneration({ phase, hasPersonFile: true })) {
@@ -216,6 +273,7 @@ export function ProductTryOn({
 
     pollAbortRef.current = false;
     mintClientRequestIdIfNeeded();
+    clearActiveTryOnSessionId(brandSlug, productSlug);
 
     const { clientRequestId } = attemptRef.current;
 
@@ -263,6 +321,8 @@ export function ProductTryOn({
       if (!createResponse.ok) {
         throw new Error(createPayload?.error ?? "Unable to start try-on.");
       }
+
+      writeActiveTryOnSessionId(brandSlug, productSlug, createPayload.sessionId);
 
       attemptRef.current = {
         ...attemptRef.current,
@@ -318,10 +378,12 @@ export function ProductTryOn({
 
       setPhase("polling");
 
-      const pollPayload = await pollSessionUntilTerminal(
-        createPayload.sessionId,
-        () => pollAbortRef.current,
-      );
+      const pollPayload = await pollTryOnSessionUntilTerminal({
+        sessionId: createPayload.sessionId,
+        brandSlug,
+        productSlug,
+        isCancelled: () => pollAbortRef.current,
+      });
 
       attemptRef.current = {
         ...attemptRef.current,
@@ -334,6 +396,7 @@ export function ProductTryOn({
       setPreviousResultUrl(null);
       setPhase("done");
     } catch (err) {
+      clearActiveTryOnSessionId(brandSlug, productSlug);
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setPhase("error");
     }

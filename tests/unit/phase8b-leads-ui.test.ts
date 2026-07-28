@@ -131,6 +131,7 @@ describe("public lead form integration boundaries", () => {
     const source = readFileSync("components/ProductTryOn.tsx", "utf8");
     assert.match(source, /phase === "done"/);
     assert.match(source, /LeadCaptureForm/);
+    assert.match(source, /readActiveTryOnSessionId/);
     assert.equal(source.includes("/demo"), false);
   });
 
