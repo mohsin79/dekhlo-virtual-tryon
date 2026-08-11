@@ -214,6 +214,54 @@ describe("ProductTryOn refresh restoration integration", () => {
   });
 });
 
+describe("restored completed try-on UI", () => {
+  it("hides upload controls for a restored completed session", () => {
+    const source = readFileSync("components/ProductTryOn.tsx", "utf8");
+    assert.match(source, /shouldShowPersonUploadControls/);
+    assert.match(source, /showUploadControls \?/);
+    assert.match(source, /setIsRestoredCompletedSession\(true\)/);
+    assert.match(source, /setIsRestoredCompletedSession\(false\)/);
+  });
+
+  it("shows a privacy-safe restored message without person image data", () => {
+    const source = readFileSync("components/ProductTryOn.tsx", "utf8");
+    assert.match(source, /RESTORED_TRY_ON_PRIVACY_MESSAGE/);
+    assert.match(source, /showRestoredPrivacyNotice/);
+    assert.equal(source.includes("person_storage_path"), false);
+    assert.match(source, /setIsRestoredCompletedSession\(true\)/);
+    assert.doesNotMatch(
+      source.slice(0, source.indexOf("const handleChooseAnotherPhoto")),
+      /createPersonUploadUrl|person_storage_path/,
+    );
+  });
+
+  it("keeps the completed result and lead form visible after restoration", () => {
+    const source = readFileSync("components/ProductTryOn.tsx", "utf8");
+    assert.match(source, /displayResultUrl/);
+    assert.match(source, /LeadCaptureForm/);
+    assert.match(source, /CHOOSE_ANOTHER_PHOTO_LABEL/);
+  });
+
+  it("returns to upload controls when choose another photo clears restored state", () => {
+    const source = readFileSync("components/ProductTryOn.tsx", "utf8");
+    assert.match(source, /handleChooseAnotherPhoto/);
+    assert.match(source, /setIsRestoredCompletedSession\(false\)/);
+    assert.match(source, /clearActiveTryOnSessionId\(brandSlug, productSlug\)/);
+    assert.match(source, /setUploaderKey/);
+  });
+
+  it("does not request person image URLs during restoration", () => {
+    const restoreSource = readFileSync("lib/try-on/sessions/session-restoration.ts", "utf8");
+    const pollingSource = readFileSync("lib/try-on/sessions/client-session-polling.ts", "utf8");
+    const componentSource = readFileSync("components/ProductTryOn.tsx", "utf8");
+
+    assert.equal(restoreSource.includes("person"), false);
+    assert.equal(pollingSource.includes("person"), false);
+    assert.equal(componentSource.includes("person_storage_path"), false);
+    assert.equal(componentSource.includes("createPersonUploadUrl"), false);
+  });
+});
+
 describe("session status route product scope", () => {
   it("validates brand and product slugs for scoped restoration requests", () => {
     const source = readFileSync("app/api/try-on/sessions/[sessionId]/route.ts", "utf8");

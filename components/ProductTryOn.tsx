@@ -20,6 +20,9 @@ import {
   isProductTryOnBusy,
   phaseAfterChooseAnotherPhoto,
   phaseAfterPersonPhotoSelected,
+  RESTORED_TRY_ON_PRIVACY_MESSAGE,
+  shouldShowPersonUploadControls,
+  shouldShowRestoredPrivacyNotice,
 } from "@/lib/try-on/sessions/product-try-on-flow";
 import {
   preparePersonPhotoForUpload,
@@ -90,6 +93,7 @@ export function ProductTryOn({
   const [currentResultUrl, setCurrentResultUrl] = useState<string | null>(null);
   const [completedSessionId, setCompletedSessionId] = useState<string | null>(null);
   const [previousResultUrl, setPreviousResultUrl] = useState<string | null>(null);
+  const [isRestoredCompletedSession, setIsRestoredCompletedSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -151,6 +155,7 @@ export function ProductTryOn({
           setCurrentResultUrl(outcome.resultUrl);
           setCompletedSessionId(savedSessionId);
           setPreviousResultUrl(null);
+          setIsRestoredCompletedSession(true);
           setPhase("done");
           return;
         }
@@ -178,6 +183,7 @@ export function ProductTryOn({
           setCurrentResultUrl(pollPayload.resultUrl);
           setCompletedSessionId(savedSessionId);
           setPreviousResultUrl(null);
+          setIsRestoredCompletedSession(true);
           setPhase("done");
           return;
         }
@@ -261,6 +267,7 @@ export function ProductTryOn({
     clearActiveTryOnSessionId(brandSlug, productSlug);
     setPersonFile(null);
     setCompletedSessionId(null);
+    setIsRestoredCompletedSession(false);
     setError(null);
     setUploaderKey((value) => value + 1);
     setPhase(phaseAfterChooseAnotherPhoto());
@@ -394,6 +401,7 @@ export function ProductTryOn({
       setCurrentResultUrl(pollPayload.resultUrl ?? null);
       setCompletedSessionId(createPayload.sessionId);
       setPreviousResultUrl(null);
+      setIsRestoredCompletedSession(false);
       setPhase("done");
     } catch (err) {
       clearActiveTryOnSessionId(brandSlug, productSlug);
@@ -417,6 +425,8 @@ export function ProductTryOn({
   });
 
   const busy = isProductTryOnBusy(phase);
+  const showUploadControls = shouldShowPersonUploadControls({ phase, isRestoredCompletedSession });
+  const showRestoredPrivacyNotice = shouldShowRestoredPrivacyNotice({ phase, isRestoredCompletedSession });
   const displayResultUrl = phase === "done" ? currentResultUrl : busy ? null : currentResultUrl;
   const showPreviousResult =
     !!previousResultUrl && (phase === "awaiting_new_photo" || phase === "photo_selected" || busy);
@@ -438,41 +448,51 @@ export function ProductTryOn({
         </div>
 
         <div className="space-y-4">
-          <Uploader
-            key={uploaderKey}
-            id="person"
-            index="01"
-            indexColor="var(--color-accent)"
-            title="Your photo"
-            hint="Full-length, front-facing, well-lit."
-            placeholder="Drop your photo, or click to browse"
-            borderColor="var(--color-accent-400)"
-            accept="image/jpeg,image/png,image/webp"
-            washed
-            onChange={handlePersonFileChange}
-          />
+          {showRestoredPrivacyNotice ? (
+            <p className="rounded-xl border border-border/70 bg-surface/60 p-4 text-sm text-muted-foreground">
+              {RESTORED_TRY_ON_PRIVACY_MESSAGE}
+            </p>
+          ) : null}
 
-          <label className="flex items-start gap-3 rounded-xl border border-border/70 bg-surface/60 p-4 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={consentToStore}
-              onChange={(event) => setConsentToStore(event.target.checked)}
-              className="mt-1"
-            />
-            <span>
-              Optional: allow Dekhlo to store this try-on result for up to 30 days to improve support and
-              troubleshooting. Without consent, results are deleted within 24 hours.
-            </span>
-          </label>
+          {showUploadControls ? (
+            <>
+              <Uploader
+                key={uploaderKey}
+                id="person"
+                index="01"
+                indexColor="var(--color-accent)"
+                title="Your photo"
+                hint="Full-length, front-facing, well-lit."
+                placeholder="Drop your photo, or click to browse"
+                borderColor="var(--color-accent-400)"
+                accept="image/jpeg,image/png,image/webp"
+                washed
+                onChange={handlePersonFileChange}
+              />
 
-          <button
-            type="button"
-            className="btn btn-primary w-full"
-            disabled={!canGenerate}
-            onClick={startTryOn}
-          >
-            {busy ? "Working on your try-on…" : GENERATE_TRY_ON_LABEL}
-          </button>
+              <label className="flex items-start gap-3 rounded-xl border border-border/70 bg-surface/60 p-4 text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={consentToStore}
+                  onChange={(event) => setConsentToStore(event.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  Optional: allow Dekhlo to store this try-on result for up to 30 days to improve support and
+                  troubleshooting. Without consent, results are deleted within 24 hours.
+                </span>
+              </label>
+
+              <button
+                type="button"
+                className="btn btn-primary w-full"
+                disabled={!canGenerate}
+                onClick={startTryOn}
+              >
+                {busy ? "Working on your try-on…" : GENERATE_TRY_ON_LABEL}
+              </button>
+            </>
+          ) : null}
 
           {phase === "done" ? (
             <button type="button" className="btn btn-secondary w-full" onClick={handleChooseAnotherPhoto}>
@@ -482,9 +502,11 @@ export function ProductTryOn({
 
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-          <p className="text-sm text-muted-foreground">
-            Only your person photo is uploaded here. The garment comes from the merchant&apos;s catalog.
-          </p>
+          {showUploadControls ? (
+            <p className="text-sm text-muted-foreground">
+              Only your person photo is uploaded here. The garment comes from the merchant&apos;s catalog.
+            </p>
+          ) : null}
         </div>
       </section>
 

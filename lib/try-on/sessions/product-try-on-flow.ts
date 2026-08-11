@@ -41,3 +41,20 @@ export function phaseAfterChooseAnotherPhoto(): ProductTryOnPhase {
 
 export const GENERATE_TRY_ON_LABEL = "Generate try-on";
 export const CHOOSE_ANOTHER_PHOTO_LABEL = "Choose another photo";
+
+export const RESTORED_TRY_ON_PRIVACY_MESSAGE =
+  "Your previous try-on has been restored securely. For privacy, your original uploaded photo is not displayed after refresh.";
+
+export function shouldShowPersonUploadControls(input: {
+  phase: ProductTryOnPhase;
+  isRestoredCompletedSession: boolean;
+}): boolean {
+  return !(input.isRestoredCompletedSession && input.phase === "done");
+}
+
+export function shouldShowRestoredPrivacyNotice(input: {
+  phase: ProductTryOnPhase;
+  isRestoredCompletedSession: boolean;
+}): boolean {
+  return input.isRestoredCompletedSession && input.phase === "done";
+}

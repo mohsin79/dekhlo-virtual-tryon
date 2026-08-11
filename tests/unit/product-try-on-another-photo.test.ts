@@ -12,6 +12,9 @@ import {
   isProductTryOnBusy,
   phaseAfterChooseAnotherPhoto,
   phaseAfterPersonPhotoSelected,
+  RESTORED_TRY_ON_PRIVACY_MESSAGE,
+  shouldShowPersonUploadControls,
+  shouldShowRestoredPrivacyNotice,
 } from "../../lib/try-on/sessions/product-try-on-flow";
 import {
   shouldMintNewClientRequestId,
@@ -135,5 +138,36 @@ describe("ProductTryOn primary action semantics", () => {
 
   it("treats generate as type button semantics (no form submit)", () => {
     assert.equal(typeof GENERATE_TRY_ON_LABEL, "string");
+  });
+});
+
+describe("restored completed session UI helpers", () => {
+  it("hides upload controls only for restored completed sessions", () => {
+    assert.equal(
+      shouldShowPersonUploadControls({ phase: "done", isRestoredCompletedSession: true }),
+      false,
+    );
+    assert.equal(
+      shouldShowPersonUploadControls({ phase: "done", isRestoredCompletedSession: false }),
+      true,
+    );
+    assert.equal(
+      shouldShowPersonUploadControls({ phase: "awaiting_new_photo", isRestoredCompletedSession: true }),
+      true,
+    );
+  });
+
+  it("shows the privacy notice only for restored completed sessions", () => {
+    assert.equal(
+      shouldShowRestoredPrivacyNotice({ phase: "done", isRestoredCompletedSession: true }),
+      true,
+    );
+    assert.equal(
+      shouldShowRestoredPrivacyNotice({ phase: "done", isRestoredCompletedSession: false }),
+      false,
+    );
+    assert.match(RESTORED_TRY_ON_PRIVACY_MESSAGE, /restored securely/i);
+    assert.match(RESTORED_TRY_ON_PRIVACY_MESSAGE, /privacy/i);
+    assert.match(RESTORED_TRY_ON_PRIVACY_MESSAGE, /not displayed after refresh/i);
   });
 });
