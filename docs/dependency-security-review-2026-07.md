@@ -125,3 +125,65 @@ Production smoke:
 - Keep **image optimization disabled**.
 - Scope overrides narrowly; verify **lint/build/start** after each change.
 - Track **dev-only** brace-expansion advisories separately from production `--omit=dev` gates.
+
+---
+
+## Follow-up patch — 2026-08-24
+
+Post–Phase 8B restoration/UI work on commit **`e1c5246`**. Application source unchanged for this remediation. No Phase 8C. No `npm audit fix`, no `npm audit fix --force`, Next.js remains **16.2.11**.
+
+### Cause of temporary audit regression
+
+Commit **`e1c5246`** did **not** modify `package.json` or `package-lock.json`. Production audit went from **0 → 4** because **new advisories** were published after the 2026-07-27 lockfile, against versions previously considered patched:
+
+| Advisory | Package | Severity | Vulnerable range | Was installed | Patched |
+|----------|---------|----------|------------------|---------------|---------|
+| [GHSA-fxqj-rqcc-2cmp](https://github.com/advisories/GHSA-fxqj-rqcc-2cmp) | `postcss` | moderate | `<=8.5.22` | 8.5.21 | **≥8.5.23** |
+| [GHSA-2v37-7h3g-55p8](https://github.com/advisories/GHSA-2v37-7h3g-55p8) | `nanoid` | high | `<3.3.18` | 3.3.16 (via PostCSS) | **3.3.18** |
+| [GHSA-rgw5-rvv9-x895](https://github.com/advisories/GHSA-rgw5-rvv9-x895) | `brace-expansion` | high | `4.0.0–5.0.8` | 5.0.8 (prod override) | **5.0.9** |
+
+`next@16.2.11` was flagged **moderate** only as a transitive effect of nested PostCSS.
+
+### Patch-level remediations applied
+
+| Package | Before | After | Method |
+|---------|--------|-------|--------|
+| `postcss` (direct + override) | 8.5.21 | **8.5.26** | Direct dependency + global override |
+| `nanoid` | 3.3.16 | **3.3.18** | Transitive via patched PostCSS (`^3.3.17`) |
+| `brace-expansion` (prod) | 5.0.8 | **5.0.9** | Scoped `minimatch@10.2.5` override only |
+
+**Preserved unchanged:** `next@16.2.11`, `sharp@0.35.0`, `gaxios → rimraf@^6.1.3`, `next.postcss → $postcss`, dev ESLint/minimatch@3 tree.
+
+Install command (pre-existing OpenAI/Zod peer resolution): `npm ci --legacy-peer-deps`.
+
+### npm audit — after 2026-08-24 patch
+
+| Command | Exit code | Production findings | Notes |
+|---------|-----------|---------------------|--------|
+| `npm audit --omit=dev --registry=https://registry.npmjs.org/` | **0** | **0** | Production tree clean |
+| `npm audit --registry=https://registry.npmjs.org/` | **1** | Dev-only | ESLint/minimatch@3 → `brace-expansion@1.1.16`; `js-yaml@4.x` under ESLint tooling (dev-only, not in production `--omit=dev` tree) |
+
+### Runtime verification (2026-08-24)
+
+```text
+npm ci --legacy-peer-deps
+npm ls next postcss nanoid brace-expansion sharp
+npm audit --omit=dev --registry=https://registry.npmjs.org/
+npm run test:unit          # 174 pass
+npx supabase db reset --local
+npx supabase test db --local   # 360 pass, 20 files
+npx tsc --noEmit           # pass
+npm run lint               # pass (4 existing warnings, 0 errors)
+npm run build              # pass
+```
+
+### Installed versions (after 2026-08-24)
+
+| Package | Version | Role |
+|---------|---------|------|
+| `next` | **16.2.11** | Direct |
+| `postcss` | **8.5.26** | Direct + deduped under `next` |
+| `nanoid` | **3.3.18** | Transitive under `postcss` |
+| `sharp` | **0.35.0** | Optional under `next` (overridden) |
+| `brace-expansion` (prod) | **5.0.9** | Under `inngest` → … → `minimatch@10.2.5` |
+| `brace-expansion` (dev) | **1.1.16** | Under ESLint → `minimatch@3.1.5` (dev-only) |
