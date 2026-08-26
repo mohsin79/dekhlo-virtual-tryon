@@ -17,6 +17,8 @@ import { mapLeadRpcError } from "@/lib/leads/lead-api-errors";
 import { buildLeadGetResponse, buildLeadPostResponse } from "@/lib/leads/public-response";
 import { buildLeadSnapshotMetadata } from "@/lib/leads/snapshot-metadata";
 import { parseLeadCaptureBody } from "@/lib/leads/validation";
+import { captureUnexpectedError } from "@/lib/observability/sentry";
+import { shouldCaptureRpcMappedStatus } from "@/lib/observability/capture-policy";
 import {
   limitLeadCaptureByIp,
   limitLeadCaptureBySession,
@@ -121,12 +123,27 @@ export async function handleLeadCapturePost(
 
   if (error) {
     const mapped = mapLeadRpcError(error.message ?? "");
+
+    if (shouldCaptureRpcMappedStatus(mapped.status)) {
+      captureUnexpectedError(error, {
+        routeCategory: "lead_capture",
+        operation: "create_try_on_lead",
+        errorCategory: "supabase_rpc",
+      });
+    }
+
     return genericErrorResponse(mapped.error, mapped.status);
   }
 
   const row = (Array.isArray(data) ? data[0] : data) as RpcRow | null;
 
   if (!row?.lead_id) {
+    captureUnexpectedError(new Error("Lead RPC returned no lead_id."), {
+      routeCategory: "lead_capture",
+      operation: "create_try_on_lead",
+      errorCategory: "empty_rpc_result",
+    });
+
     return genericErrorResponse("Unable to submit lead.", 500);
   }
 
@@ -156,6 +173,12 @@ export async function handleLeadCaptureGet(sessionId: string): Promise<NextRespo
     .maybeSingle();
 
   if (error) {
+    captureUnexpectedError(error, {
+      routeCategory: "lead_capture",
+      operation: "load_lead_status",
+      errorCategory: "supabase_query",
+    });
+
     return genericErrorResponse("Unable to load lead status.", 500);
   }
 

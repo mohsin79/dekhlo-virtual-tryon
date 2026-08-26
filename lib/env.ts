@@ -86,3 +86,15 @@ export function resolveLeadRateLimitHashSecret(env: LeadRateLimitEnv = process.e
 export function getLeadRateLimitHashSecret(): string {
   return resolveLeadRateLimitHashSecret(process.env);
 }
+
+export function getSentryDsn(): string | undefined {
+  return process.env.SENTRY_DSN?.trim() || undefined;
+}
+
+export function getSentryEnvironment(): string {
+  return process.env.SENTRY_ENVIRONMENT?.trim() || process.env.NODE_ENV || "development";
+}
+
+export function getSentryRelease(): string | undefined {
+  return process.env.SENTRY_RELEASE?.trim() || undefined;
+}

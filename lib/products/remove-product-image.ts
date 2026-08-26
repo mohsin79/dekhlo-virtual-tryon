@@ -3,6 +3,7 @@ import {
   canRemoveProductImagePath,
 } from "@/lib/products/storage-path";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { captureOperationalMessage } from "@/lib/observability/sentry";
 
 export type RemoveProductImageContext = {
   brandId: string;
@@ -41,7 +42,16 @@ export function logProductImageCleanupFailure(
   context: RemoveProductImageContext & { productId: string },
   errorCode: string,
 ): void {
-  console.warn(
-    `[product-image-cleanup] productId=${context.productId} brandId=${context.brandId} errorCode=${errorCode}`,
-  );
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[product-image-cleanup] errorCode=${errorCode}`,
+    );
+    return;
+  }
+
+  captureOperationalMessage("product_image_cleanup_failed", {
+    routeCategory: "product_image_cleanup",
+    operation: "storage_remove",
+    errorCategory: errorCode,
+  });
 }

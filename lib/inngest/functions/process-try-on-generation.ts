@@ -1,6 +1,7 @@
 import { NonRetriableError } from "inngest";
 import { inngest } from "@/lib/inngest/client";
 import { TRY_ON_GENERATION_REQUESTED } from "@/lib/inngest/events";
+import { captureUnexpectedError } from "@/lib/observability/sentry";
 import {
   claimProcessingForWorker,
   compensateFailedGeneration,
@@ -53,7 +54,7 @@ export const processTryOnGeneration = inngest.createFunction(
       { limit: 1, key: "event.data.sessionId" },
       { limit: 8 },
     ],
-    onFailure: async ({ event, step }) => {
+    onFailure: async ({ event, step, error }) => {
       await step.run("release-after-final-failure", async () => {
         const sessionId = extractSessionIdFromFailureEvent(event);
 
@@ -66,6 +67,13 @@ export const processTryOnGeneration = inngest.createFunction(
           errorCode: "GENERATION_FAILED",
           sanitizedErrorMessage: "Try-on generation failed. Please try again.",
         });
+      });
+
+      captureUnexpectedError(error, {
+        routeCategory: "inngest_worker",
+        operation: "process_try_on_generation",
+        errorCategory: "generation_exhausted",
+        inngestFunctionId: "process-try-on-generation",
       });
     },
   },

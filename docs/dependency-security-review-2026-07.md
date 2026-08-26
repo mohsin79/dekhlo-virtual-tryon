@@ -187,3 +187,20 @@ npm run build              # pass
 | `sharp` | **0.35.0** | Optional under `next` (overridden) |
 | `brace-expansion` (prod) | **5.0.9** | Under `inngest` → … → `minimatch@10.2.5` |
 | `brace-expansion` (dev) | **1.1.16** | Under ESLint → `minimatch@3.1.5` (dev-only) |
+
+---
+
+## Phase 8C.1 — `@sentry/nextjs` (2026-08-26)
+
+Added **`@sentry/nextjs@10.71.0`** for server-side error observability only (no browser SDK in this phase).
+
+| Check | Result |
+|-------|--------|
+| `npm audit --omit=dev` after install | **0 vulnerabilities** |
+| Next.js peer compatibility | **16.2.11** supported |
+| React peer compatibility | **19.x** supported |
+| Node engines | **≥ 20.9** (project `engines`) |
+
+Install method: `npm install @sentry/nextjs@10.71.0 --legacy-peer-deps` (same OpenAI/Zod peer resolution as existing deps).
+
+No production dependency advisories introduced. Sentry adds build-time tooling via `@sentry/webpack-plugin` (dev/build only); source-map upload is disabled when `SENTRY_AUTH_TOKEN` is absent.

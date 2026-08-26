@@ -131,7 +131,9 @@ export async function generateTryOnResultForWorker(input: {
 }): Promise<{ imageBase64: string; providerRequestId?: string }> {
   const personDataUrl = await bufferToDataUrl(input.personBuffer, "image/jpeg");
   const itemDataUrl = await bufferToDataUrl(input.itemBuffer, input.itemMimeType);
-  const generation = await generateTryOnImage({ personDataUrl, itemDataUrl });
+  const generation = await generateTryOnImage({ personDataUrl, itemDataUrl }, {
+    reportToObservability: false,
+  });
 
   if (!generation.ok) {
     throw new Error("Try-on generation failed.");

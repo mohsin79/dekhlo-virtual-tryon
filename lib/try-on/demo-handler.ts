@@ -8,7 +8,7 @@ import {
   rateLimitedResponse,
 } from "@/lib/api/security";
 import { validatePersonPhotoBuffer } from "@/lib/try-on/sessions/person-validation";
-import { bufferToDataUrl, generateTryOnImage } from "@/lib/try-on/generate";
+import { bufferToDataUrl, generateTryOnImage, TRY_ON_SERVICE_UNAVAILABLE_MESSAGE } from "@/lib/try-on/generate";
 import {
   DEMO_ACCESS_COOKIE,
   generateDemoSessionId,
@@ -79,10 +79,7 @@ export async function handleDemoTryOn(request: Request) {
   }
 
   if (!process.env.OPENAI_API_KEY) {
-    return genericErrorResponse(
-      "The try-on service is not configured yet. Add OPENAI_API_KEY to your environment.",
-      500,
-    );
+    return genericErrorResponse(TRY_ON_SERVICE_UNAVAILABLE_MESSAGE, 503);
   }
 
   let form: FormData;

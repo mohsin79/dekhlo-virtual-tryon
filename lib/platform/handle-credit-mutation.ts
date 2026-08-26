@@ -12,6 +12,8 @@ import { PLATFORM_MAX_JSON_BODY_BYTES } from "@/lib/platform/constants";
 import { mapPlatformCreditRpcError } from "@/lib/platform/credit-api-errors";
 import { loadPlatformAdminProfile } from "@/lib/platform/require-platform-admin";
 import { parsePlatformCreditMutationBody } from "@/lib/platform/validation";
+import { captureUnexpectedError } from "@/lib/observability/sentry";
+import { shouldCaptureRpcMappedStatus } from "@/lib/observability/capture-policy";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { NextResponse } from "next/server";
 
@@ -99,12 +101,27 @@ export async function handlePlatformCreditMutation(
 
   if (error) {
     const mapped = mapPlatformCreditRpcError(error.message ?? "", operation);
+
+    if (shouldCaptureRpcMappedStatus(mapped.status)) {
+      captureUnexpectedError(error, {
+        routeCategory: "platform_credits",
+        operation,
+        errorCategory: "supabase_rpc",
+      });
+    }
+
     return genericErrorResponse(mapped.error, mapped.status);
   }
 
   const row = (Array.isArray(data) ? data[0] : data) as RpcRow | undefined;
 
   if (!row) {
+    captureUnexpectedError(new Error("Credit RPC returned no row."), {
+      routeCategory: "platform_credits",
+      operation,
+      errorCategory: "empty_rpc_result",
+    });
+
     return genericErrorResponse("Unable to complete credit operation.", 500);
   }
 

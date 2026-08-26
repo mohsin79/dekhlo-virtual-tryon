@@ -7,7 +7,20 @@ import {
   TRY_ON_VISION_DETAIL,
 } from "@/lib/try-on/config";
 import { extractGeneratedImage } from "@/lib/try-on/extract-image";
+import {
+  captureOperationalMessage,
+  captureUnexpectedError,
+} from "@/lib/observability/sentry";
+import {
+  TRY_ON_SERVICE_UNAVAILABLE_MESSAGE,
+  toClientSafeGenerationFailureMessage,
+} from "@/lib/try-on/generation-messages";
 import { TRY_ON_PROMPT } from "@/lib/try-on/prompt";
+
+export {
+  TRY_ON_GENERATION_FAILED_MESSAGE,
+  TRY_ON_SERVICE_UNAVAILABLE_MESSAGE,
+} from "@/lib/try-on/generation-messages";
 
 type ImageGenTool = OpenAI.Responses.Tool.ImageGeneration & {
   action?: "auto" | "generate" | "edit";
@@ -22,17 +35,32 @@ export type TryOnGenerationInput = {
   itemDataUrl: string;
 };
 
+export type TryOnGenerationOptions = {
+  /** When false, suppresses Sentry capture so Inngest final-failure hooks report once. */
+  reportToObservability?: boolean;
+};
+
 export type TryOnGenerationResult =
   | { ok: true; imageBase64: string; providerRequestId?: string }
   | { ok: false; message: string };
 
 export async function generateTryOnImage(
   input: TryOnGenerationInput,
+  options: TryOnGenerationOptions = {},
 ): Promise<TryOnGenerationResult> {
+  const reportToObservability = options.reportToObservability ?? true;
   if (!process.env.OPENAI_API_KEY) {
+    if (reportToObservability) {
+      captureOperationalMessage("try_on_provider_not_configured", {
+        routeCategory: "try_on_generation",
+        operation: "openai_init",
+        errorCategory: "configuration",
+      });
+    }
+
     return {
       ok: false,
-      message: "The try-on service is not configured yet. Add OPENAI_API_KEY to your environment.",
+      message: TRY_ON_SERVICE_UNAVAILABLE_MESSAGE,
     };
   }
 
@@ -84,8 +112,15 @@ export async function generateTryOnImage(
 
     return { ok: true, imageBase64: b64, providerRequestId: response.id };
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Try-on failed.";
-    return { ok: false, message };
+    if (reportToObservability) {
+      captureUnexpectedError(err, {
+        routeCategory: "try_on_generation",
+        operation: "openai_generate",
+        errorCategory: "provider_failure",
+      });
+    }
+
+    return { ok: false, message: toClientSafeGenerationFailureMessage() };
   }
 }
 
