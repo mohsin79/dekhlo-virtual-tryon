@@ -39,6 +39,33 @@ const ALLOWLISTED_CONTEXT_KEYS = new Set([
   "messageCode",
 ]);
 
+/** Sentry contexts derived from browser/client requests — never send. */
+const REMOVED_CONTEXT_KEYS = new Set([
+  "browser",
+  "client_os",
+  "device",
+  "culture",
+  "locale",
+  "timezone",
+  "geo",
+  "user_agent",
+  "os",
+  "client",
+]);
+
+const BREADCRUMB_DATA_KEYS_TO_REMOVE = new Set([
+  "headers",
+  "request_headers",
+  "response_headers",
+  "body",
+  "request_body",
+  "response_body",
+  "cookie",
+  "cookies",
+  "authorization",
+  "set-cookie",
+]);
+
 const SENSITIVE_QUERY_PARAMS = new Set([
   "token",
   "access_token",
@@ -79,6 +106,15 @@ function truncateString(value: string): string {
   }
 
   return `${value.slice(0, SCRUB_LIMITS.maxStringLength)}…`;
+}
+
+export function sanitizeRequestPath(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl, "http://localhost");
+    return url.pathname || "/";
+  } catch {
+    return REDACTED;
+  }
 }
 
 export function sanitizeUrl(rawUrl: string): string {
@@ -186,30 +222,129 @@ function scrubRequestData(event: SentryEvent): void {
     return;
   }
 
-  delete event.request.cookies;
-  delete event.request.data;
-  delete (event.request as { body?: unknown }).body;
+  const method =
+    typeof event.request.method === "string" ? event.request.method.toUpperCase() : undefined;
+  const path =
+    typeof event.request.url === "string" ? sanitizeRequestPath(event.request.url) : undefined;
 
-  if (event.request.headers) {
-    for (const key of Object.keys(event.request.headers)) {
-      if (isSensitiveKey(key)) {
-        event.request.headers[key] = REDACTED;
-      }
-    }
+  event.request = {};
+
+  if (method) {
+    event.request.method = method;
   }
 
-  if (typeof event.request.url === "string") {
-    event.request.url = sanitizeUrl(event.request.url);
+  if (path) {
+    event.request.url = path;
   }
 }
 
 function scrubUserData(event: SentryEvent): void {
-  if (event.user) {
-    delete event.user.email;
-    delete event.user.ip_address;
-    delete event.user.username;
-    delete event.user.name;
+  delete event.user;
+}
+
+function scrubServerIdentity(event: SentryEvent): void {
+  delete event.server_name;
+}
+
+function scrubRuntimeContext(contexts: NonNullable<SentryEvent["contexts"]>): void {
+  const runtime = contexts.runtime;
+
+  if (!runtime || typeof runtime !== "object") {
+    return;
   }
+
+  const safeRuntime: Record<string, string> = {};
+
+  if (typeof runtime.name === "string" && runtime.name.length > 0) {
+    safeRuntime.name = runtime.name;
+  }
+
+  if (typeof runtime.version === "string" && runtime.version.length > 0) {
+    safeRuntime.version = runtime.version;
+  }
+
+  contexts.runtime = safeRuntime;
+}
+
+function scrubContexts(event: SentryEvent): void {
+  if (!event.contexts) {
+    return;
+  }
+
+  for (const key of REMOVED_CONTEXT_KEYS) {
+    delete event.contexts[key];
+  }
+
+  scrubRuntimeContext(event.contexts);
+
+  for (const [key, value] of Object.entries(event.contexts)) {
+    if (REMOVED_CONTEXT_KEYS.has(key) || key === "runtime") {
+      continue;
+    }
+
+    event.contexts[key] = deepScrub(value) as (typeof event.contexts)[string];
+  }
+}
+
+function scrubBreadcrumbData(
+  breadcrumb: NonNullable<SentryEvent["breadcrumbs"]>[number],
+): Record<string, unknown> | undefined {
+  if (!breadcrumb.data) {
+    return undefined;
+  }
+
+  const data: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(breadcrumb.data)) {
+    const normalizedKey = key.toLowerCase();
+
+    if (BREADCRUMB_DATA_KEYS_TO_REMOVE.has(normalizedKey) || isSensitiveKey(key)) {
+      continue;
+    }
+
+    if (normalizedKey === "url" && typeof value === "string") {
+      data[key] = sanitizeRequestPath(value);
+      continue;
+    }
+
+    if (breadcrumb.category === "console") {
+      const scrubbed = deepScrub(value);
+
+      if (scrubbed === REDACTED) {
+        continue;
+      }
+
+      data[key] = scrubbed;
+      continue;
+    }
+
+    data[key] = deepScrub(value);
+  }
+
+  return Object.keys(data).length > 0 ? data : undefined;
+}
+
+export function scrubBreadcrumb(
+  breadcrumb: NonNullable<SentryEvent["breadcrumbs"]>[number],
+): NonNullable<SentryEvent["breadcrumbs"]>[number] {
+  const scrubbed: NonNullable<SentryEvent["breadcrumbs"]>[number] = {
+    category: breadcrumb.category,
+    type: breadcrumb.type,
+    level: breadcrumb.level,
+    timestamp: breadcrumb.timestamp,
+  };
+
+  if (typeof breadcrumb.message === "string") {
+    scrubbed.message = truncateString(deepScrub(breadcrumb.message) as string);
+  }
+
+  const data = scrubBreadcrumbData(breadcrumb);
+
+  if (data) {
+    scrubbed.data = data;
+  }
+
+  return scrubbed;
 }
 
 function scrubBreadcrumbs(event: SentryEvent): void {
@@ -217,15 +352,7 @@ function scrubBreadcrumbs(event: SentryEvent): void {
     return;
   }
 
-  event.breadcrumbs = event.breadcrumbs.map((breadcrumb) => {
-    const scrubbed = deepScrub(breadcrumb) as typeof breadcrumb;
-
-    if (typeof scrubbed.data?.url === "string") {
-      scrubbed.data.url = sanitizeUrl(scrubbed.data.url);
-    }
-
-    return scrubbed;
-  });
+  event.breadcrumbs = event.breadcrumbs.map((breadcrumb) => scrubBreadcrumb(breadcrumb));
 }
 
 function scrubExtraContext(event: SentryEvent): void {
@@ -242,7 +369,7 @@ function scrubExtraContext(event: SentryEvent): void {
   }
 
   if (event.contexts) {
-    event.contexts = deepScrub(event.contexts) as SentryEvent["contexts"];
+    scrubContexts(event);
   }
 
   if (event.tags) {
@@ -251,6 +378,7 @@ function scrubExtraContext(event: SentryEvent): void {
 }
 
 export function scrubSentryEvent(event: SentryEvent): SentryEvent {
+  scrubServerIdentity(event);
   scrubRequestData(event);
   scrubUserData(event);
   scrubBreadcrumbs(event);

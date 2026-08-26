@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import type { ErrorEvent, EventHint } from "@sentry/core";
 import { getSentryDsn, getSentryEnvironment, getSentryRelease } from "@/lib/env";
 import { isExpectedApplicationError } from "@/lib/observability/capture-policy";
-import { scrubSentryEvent, shouldDropSentryEvent } from "@/lib/observability/sentry-scrub";
+import { scrubBreadcrumb, scrubSentryEvent, shouldDropSentryEvent } from "@/lib/observability/sentry-scrub";
 
 const dsn = getSentryDsn();
 
@@ -12,7 +12,11 @@ if (dsn) {
     environment: getSentryEnvironment(),
     release: getSentryRelease(),
     sendDefaultPii: false,
+    includeServerName: false,
     tracesSampleRate: 0,
+    beforeBreadcrumb(breadcrumb) {
+      return scrubBreadcrumb(breadcrumb);
+    },
     beforeSend(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
       const originalError = hint.originalException;
 

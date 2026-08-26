@@ -11,6 +11,7 @@ import {
   isSensitiveKey,
   sanitizeAllowlistedContext,
   sanitizeUrl,
+  scrubBreadcrumb,
   scrubSentryEvent,
   shouldDropSentryEvent,
 } from "@/lib/observability/sentry-scrub";
@@ -106,6 +107,7 @@ describe("Phase 8C.1 scrubbing", () => {
         cookies: { sb: "token" },
         data: { email: "user@example.com" },
         headers: { Authorization: "Bearer abc", "content-type": "application/json" },
+        method: "get",
       },
       extra: {
         routeCategory: "demo",
@@ -120,16 +122,144 @@ describe("Phase 8C.1 scrubbing", () => {
       ],
     });
 
-    assert.equal(event.user?.email, undefined);
-    assert.equal(event.user?.ip_address, undefined);
+    assert.equal(event.user, undefined);
     assert.equal(event.request?.cookies, undefined);
     assert.equal(event.request?.data, undefined);
-    assert.equal(event.request?.headers?.Authorization, "[redacted]");
-    assert.equal(event.request?.url?.includes("secret"), false);
+    assert.equal(event.request?.headers, undefined);
+    assert.equal(event.request?.method, "GET");
+    assert.equal(event.request?.url, "/api");
     assert.equal(event.extra?.email, undefined);
     assert.equal(event.extra?.routeCategory, "demo");
     assert.equal(event.extra?.openaiResponse, undefined);
-    assert.equal(event.breadcrumbs?.[0]?.data?.url?.includes("secret"), false);
+    assert.equal(event.breadcrumbs?.[0]?.data?.url, "/api");
+  });
+
+  it("strips automatic client metadata while preserving safe diagnostics", () => {
+    const event = scrubSentryEvent({
+      environment: "development",
+      release: "phase8c1-local",
+      server_name: "mohsins-macbook-pro.local",
+      user: {
+        id: "user-123",
+        email: "shopper@example.com",
+        ip_address: "203.0.113.10",
+        geo: { country_code: "PK", city: "Karachi" },
+      },
+      request: {
+        method: "get",
+        url: "http://localhost:3000/api/dev/sentry-smoke?debug=1",
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          "Accept-Language": "en-US",
+          "Accept-Encoding": "gzip",
+          "X-Forwarded-For": "203.0.113.10",
+          Accept: "application/json",
+        },
+        cookies: { session: "secret" },
+      },
+      contexts: {
+        browser: { name: "Chrome", version: "120.0.0" },
+        client_os: { name: "macOS", version: "14.0" },
+        os: { name: "macOS", version: "14.0" },
+        device: { family: "Mac", model: "MacBookPro" },
+        culture: { locale: "en-US" },
+        locale: { code: "en-US" },
+        timezone: { name: "Asia/Karachi" },
+        geo: { country_code: "PK" },
+        user_agent: { original: "Mozilla/5.0" },
+        runtime: { name: "node", version: "22.15.0", hostname: "mohsins-macbook-pro.local" },
+      },
+      tags: {
+        routeCategory: "diagnostic",
+        operation: "sentry_smoke",
+        errorCategory: "verification",
+        browser: "Chrome 120",
+        locale: "en-US",
+      },
+      breadcrumbs: [
+        {
+          category: "http",
+          type: "http",
+          data: {
+            url: "https://api.openai.com/v1/responses?token=secret",
+            method: "POST",
+            headers: { Authorization: "Bearer sk-live" },
+            request_body: { prompt: "secret prompt" },
+          },
+        },
+        {
+          category: "console",
+          type: "debug",
+          message: "debug",
+          data: { email: "shopper@example.com", api_key: "sk-live" },
+        },
+      ],
+    } as Parameters<typeof scrubSentryEvent>[0]);
+
+    assert.equal(event.server_name, undefined);
+    assert.equal(event.user, undefined);
+    assert.equal(event.environment, "development");
+    assert.equal(event.release, "phase8c1-local");
+    assert.equal(event.request?.headers, undefined);
+    assert.equal(event.request?.cookies, undefined);
+    assert.equal(event.request?.method, "GET");
+    assert.equal(event.request?.url, "/api/dev/sentry-smoke");
+    assert.equal(event.contexts?.browser, undefined);
+    assert.equal(event.contexts?.client_os, undefined);
+    assert.equal(event.contexts?.os, undefined);
+    assert.equal(event.contexts?.device, undefined);
+    assert.equal(event.contexts?.culture, undefined);
+    assert.equal(event.contexts?.locale, undefined);
+    assert.equal(event.contexts?.timezone, undefined);
+    assert.equal(event.contexts?.geo, undefined);
+    assert.equal(event.contexts?.user_agent, undefined);
+    assert.deepEqual(event.contexts?.runtime, { name: "node", version: "22.15.0" });
+    assert.deepEqual(event.tags, {
+      routeCategory: "diagnostic",
+      operation: "sentry_smoke",
+      errorCategory: "verification",
+    });
+
+    const httpCrumb = event.breadcrumbs?.[0];
+    assert.equal(httpCrumb?.category, "http");
+    assert.equal(httpCrumb?.data?.url, "/v1/responses");
+    assert.equal(httpCrumb?.data?.headers, undefined);
+    assert.equal(httpCrumb?.data?.request_body, undefined);
+
+    const consoleCrumb = event.breadcrumbs?.[1];
+    assert.equal(consoleCrumb?.category, "console");
+    assert.equal(consoleCrumb?.data?.email, undefined);
+    assert.equal(consoleCrumb?.data?.api_key, undefined);
+  });
+
+  it("scrubs individual HTTP and console breadcrumbs", () => {
+    const httpCrumb = scrubBreadcrumb({
+      category: "http",
+      type: "http",
+      data: {
+        url: "https://project.supabase.co/storage/v1/object/sign/x?token=abc",
+        headers: { Authorization: "Bearer secret" },
+        response_body: { signedUrl: "https://example.com?sig=1" },
+      },
+    });
+
+    assert.equal(httpCrumb.data?.url, "/storage/v1/object/sign/x");
+    assert.equal(httpCrumb.data?.headers, undefined);
+    assert.equal(httpCrumb.data?.response_body, undefined);
+
+    const consoleCrumb = scrubBreadcrumb({
+      category: "console",
+      type: "debug",
+      message: "lead capture failed",
+      data: {
+        fullName: "Ada",
+        safeStage: "validation",
+      },
+    });
+
+    assert.equal(consoleCrumb.message, "lead capture failed");
+    assert.equal(consoleCrumb.data?.fullName, undefined);
+    assert.equal(consoleCrumb.data?.safeStage, "validation");
   });
 });
 
