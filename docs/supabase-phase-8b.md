@@ -1,6 +1,6 @@
 # Supabase Phase 8B — Leads
 
-Phase **8B.1** adds the `leads` table, RLS, `create_try_on_lead` RPC, and secure capture API routes. **8B.1 is closed** after remote runtime verification below. **8B.2** adds the optional public lead form and merchant `/dashboard/leads`. **8C** is not started.
+Phase **8B.1** adds the `leads` table, RLS, `create_try_on_lead` RPC, and secure capture API routes. **8B.1 is closed** after remote runtime verification below. **8B.2** adds the optional public lead form, merchant `/dashboard/leads`, completed-session restoration after refresh, and restored-session privacy UI. **Phase 8B is closed** after 8B.2 runtime verification below. **8C** is not started.
 
 **No credentials, tokens, or private customer data belong in this document.**
 
@@ -284,27 +284,134 @@ Expected: **≥ 360** pgTAP tests, **≥ 130** unit tests, clean TypeScript, lin
 
 ### Manual verification checklist (8B.2)
 
-Local or staging smoke (no real PII in notes):
+Superseded by **Phase 8B.2 runtime verification** below (recorded after implementation commits through dependency remediation **`64560ee`**).
 
-| Check | Expected |
-|-------|----------|
-| Completed merchant try-on shows optional lead form | Pass when result visible |
-| Result remains without submission | Pass |
-| Dismiss / reopen | Pass; storage has no PII |
-| First POST | 201; success state |
-| Refresh after submit | GET `submitted: true`; no duplicate row |
-| `/dashboard/leads` owner/admin | Sees lead; filters/pagination work |
-| Editor/analyst | Forbidden/not-found; nav link hidden |
-| `/demo` | No lead capture |
-| Lead POST | No credit, OpenAI, Inngest, or Storage side effects |
+### Phase 8B.2 runtime verification (manual)
+
+Recorded after local/staging smoke on a disposable completed merchant try-on session on Test Brand. No real identifiers, PII, tokens, secret values, signed URLs, or customer images appear in this section.
+
+#### Public try-on lead experience (passed)
+
+| Check | Result |
+|-------|--------|
+| Completed merchant try-on displayed the optional lead form | Pass |
+| Completed result remained visible without lead submission | Pass |
+| Lead form was not shown on `/demo` | Pass |
+| GET lead status initially returned `submitted: false` | Pass |
+| Lead form could be dismissed | Pass |
+| Lead form could be reopened | Pass |
+| `sessionStorage` dismissal state contained no PII | Pass |
+| Contact consent was mandatory | Pass |
+| Marketing consent was unchecked by default | Pass |
+| Lead POST payload contained only approved fields | Pass |
+| First lead submission returned HTTP 201 | Pass |
+| First submission returned `wasCreated: true` | Pass |
+| POST response exposed no submitted PII | Pass |
+| Result remained visible after submission | Pass |
+| Success / details-received state appeared | Pass |
+| Exactly one lead row was created | Pass |
+| Email normalization succeeded | Pass |
+| Phone normalization succeeded | Pass |
+| Source remained `try_on_result` | Pass |
+
+#### Completed-session restoration (passed)
+
+| Check | Result |
+|-------|--------|
+| Completed try-on session ID was persisted in `sessionStorage` | Pass |
+| Storage key was route-scoped: `dekhlo-active-try-on:{brandSlug}:{productSlug}` | Pass |
+| Stored value was UUID only | Pass |
+| No token, PII, signed URL, image, lead ID, provider data, or storage path was persisted | Pass |
+| Refresh restored the completed session | Pass |
+| Refresh restored the generated result | Pass |
+| Original shopper photo was intentionally not restored | Pass |
+| Privacy restoration message appeared | Pass |
+| Empty upload controls were hidden for restored completed sessions | Pass |
+| Choose another photo remained available | Pass |
+| GET lead status after refresh returned `submitted: true` | Pass |
+| Already-submitted / details-received state was restored | Pass |
+| No automatic lead POST occurred | Pass |
+| No duplicate lead row was created | Pass |
+| No new try-on session was created | Pass |
+| No generation job was queued | Pass |
+| No OpenAI call occurred | Pass |
+| No Inngest generation event occurred | Pass |
+| No additional credit transaction occurred | Pass |
+
+#### Merchant leads dashboard (passed)
+
+| Check | Result |
+|-------|--------|
+| Owner could access `/dashboard/leads` | Pass |
+| Admin access covered by automated tests | Pass (unit) |
+| Editor access denied by automated tests | Pass (pgTAP / unit) |
+| Analyst access denied by automated tests | Pass (pgTAP / unit) |
+| Merchant lead query used authenticated client + RLS | Pass |
+| Test lead appeared in dashboard | Pass |
+| Lead search worked | Pass |
+| No-results state worked | Pass |
+| Product filtering worked | Pass |
+| Date filtering worked | Pass |
+| Filters cleared successfully | Pass |
+| Email `mailto:` link was safe | Pass |
+| Phone `tel:` link was safe | Pass |
+| No raw metadata was displayed | Pass |
+| No lead ID was displayed | Pass |
+| No session ID was displayed | Pass |
+| No idempotency key was displayed | Pass |
+| No storage / provider / token information was displayed | Pass |
+| No export, edit, delete, or bulk actions were present | Pass |
+
+#### Regression and side effects (passed)
+
+| Check | Result |
+|-------|--------|
+| `/demo` remained unchanged | Pass |
+| `/demo` performed no lead GET/POST | Pass |
+| Lead submission created no additional credit transaction | Pass |
+| Try-on credit lifecycle remained one reserve and one consume | Pass |
+| Exactly one lead remained for the test session | Pass |
+| Lead submission did not modify `try_on_sessions` lifecycle fields | Pass |
+| Lead submission did not trigger OpenAI | Pass |
+| Lead submission did not trigger Inngest generation | Pass |
+| Refresh restoration did not trigger generation | Pass |
+| Storage behavior remained unchanged | Pass |
+| Phase 7 cleanup behavior remained unchanged | Pass |
+| Phase 8A platform administration remained unchanged | Pass |
+
+#### Dependency security (passed)
+
+New PostCSS, nanoid, and brace-expansion advisories appeared after the previous production audit (**0** vulnerabilities). UI and restoration commits did not modify dependencies. Dependency-only remediation commit **`64560ee`** (`chore: patch production dependency advisories`) applied patch-level updates without changing application behavior.
+
+| Check | Result |
+|-------|--------|
+| Next.js remained **16.2.11** | Pass |
+| PostCSS updated to **8.5.26** | Pass |
+| Nanoid resolved to **3.3.18** (via patched PostCSS) | Pass |
+| Production `brace-expansion` updated to **5.0.9** | Pass |
+| Sharp remained **0.35.0** | Pass |
+| `npm audit --omit=dev` = **0** vulnerabilities | Pass |
+| Full `npm audit` retains known dev-only findings only | Pass |
+
+See also `docs/dependency-security-review-2026-07.md` (2026-08-24 follow-up patch section).
 
 ### Automated verification (8B.2)
 
-Same commands as 8B.1; unit count increases with `tests/unit/phase8b-leads-ui.test.ts` and permission assertions in `phase8b-leads.test.ts`. pgTAP remains **360** (no new migrations in 8B.2).
+Same commands as 8B.1; unit count includes `tests/unit/phase8b-leads-ui.test.ts`, `tests/unit/phase8b-try-on-session-restore.test.ts`, `tests/unit/product-try-on-another-photo.test.ts`, and permission assertions in `phase8b-leads.test.ts`. pgTAP remains **360** (no new migrations in 8B.2).
 
-## Out of scope (8B.1)
+Expected after closure: **360** pgTAP tests, **≥ 174** unit tests, clean TypeScript, lint (acknowledged warnings only), production build on Next.js **16.2.11**, **0** production npm audit vulnerabilities.
 
-- Public lead form UI *(delivered in 8B.2)*
-- `/dashboard/leads` *(delivered in 8B.2)*
+---
+
+## Phase 8B closure
+
+| Milestone | Status |
+|-----------|--------|
+| 8B.1 — schema, RLS, RPC, capture API | **Closed** (remote + local verification) |
+| 8B.2 — public form, dashboard, session restoration, privacy UI | **Closed** (runtime verification above) |
+| 8C — observability | **Not started** |
+
+## Out of scope (8B)
+
 - Email/CRM/export
 - Phase 8C observability
