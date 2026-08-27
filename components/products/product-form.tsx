@@ -7,6 +7,7 @@ import {
   type ProductActionState,
 } from "@/app/dashboard/products/actions";
 import { suggestProductSlug } from "@/lib/validation/product";
+import { markPendingAnalyticsEvent } from "@/lib/analytics/pending-events";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,7 +57,15 @@ export function ProductForm({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form action={formAction} className="space-y-5">
+        <form
+          action={formAction}
+          className="space-y-5"
+          onSubmit={() => {
+            if (mode === "create") {
+              markPendingAnalyticsEvent("product_created");
+            }
+          }}
+        >
           {productId ? <input type="hidden" name="productId" value={productId} /> : null}
 
           {state.error ? (

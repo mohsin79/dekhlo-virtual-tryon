@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { createBrandAction, type AuthActionState } from "@/app/auth/actions";
 import { suggestBrandSlug } from "@/lib/validation/brand";
+import { markPendingAnalyticsEvent } from "@/lib/analytics/pending-events";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +29,13 @@ export function OnboardingForm() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form action={formAction} className="space-y-5">
+        <form
+          action={formAction}
+          className="space-y-5"
+          onSubmit={() => {
+            markPendingAnalyticsEvent("brand_created");
+          }}
+        >
           {state.error ? (
             <Alert variant="destructive">
               <AlertDescription>{state.error}</AlertDescription>

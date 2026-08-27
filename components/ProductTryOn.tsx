@@ -41,6 +41,10 @@ import {
   isValidTryOnSessionId,
 } from "@/lib/try-on/sessions/session-restoration";
 import { LeadCaptureForm } from "@/components/leads/lead-capture-form";
+import {
+  mapTryOnClientFailureCategory,
+} from "@/lib/analytics/events";
+import { trackAnalyticsEvent } from "@/lib/analytics/track";
 import type { Database } from "@/lib/supabase/database.types";
 
 type TryOnSessionStatus = Database["public"]["Enums"]["try_on_session_status"];
@@ -85,6 +89,7 @@ export function ProductTryOn({
   const attemptRef = useRef<AttemptState>(createInitialAttemptState());
   const pollAbortRef = useRef(false);
   const lastCompletedPhotoRef = useRef<CompletedPhotoFingerprint | null>(null);
+  const tryOnCompletedTrackedRef = useRef(false);
 
   const [uploaderKey, setUploaderKey] = useState(0);
   const [personFile, setPersonFile] = useState<File | null>(null);
@@ -268,6 +273,7 @@ export function ProductTryOn({
     setPersonFile(null);
     setCompletedSessionId(null);
     setIsRestoredCompletedSession(false);
+    tryOnCompletedTrackedRef.current = false;
     setError(null);
     setUploaderKey((value) => value + 1);
     setPhase(phaseAfterChooseAnotherPhoto());
@@ -283,10 +289,12 @@ export function ProductTryOn({
     clearActiveTryOnSessionId(brandSlug, productSlug);
 
     const { clientRequestId } = attemptRef.current;
+    let activePhase = phase;
 
     setPreviousResultUrl(currentResultUrl);
     setCurrentResultUrl(null);
     setPhase("optimizing");
+    activePhase = "optimizing";
     setError(null);
 
     try {
@@ -311,6 +319,14 @@ export function ProductTryOn({
       }
 
       setPhase("creating");
+      activePhase = "creating";
+
+      trackAnalyticsEvent({
+        event: "try_on_started",
+        surface: "try_on",
+        route_group: "/try",
+        outcome: "started",
+      });
 
       const createResponse = await fetch("/api/try-on/sessions", {
         method: "POST",
@@ -338,6 +354,7 @@ export function ProductTryOn({
       };
 
       setPhase("uploading");
+      activePhase = "uploading";
 
       const uploadResponse = await fetch(createPayload.uploadUrl, {
         method: "PUT",
@@ -352,6 +369,7 @@ export function ProductTryOn({
       }
 
       setPhase("validating");
+      activePhase = "validating";
 
       const validateResponse = await fetch(
         `/api/try-on/sessions/${createPayload.sessionId}/validate-upload`,
@@ -384,6 +402,7 @@ export function ProductTryOn({
       };
 
       setPhase("polling");
+      activePhase = "polling";
 
       const pollPayload = await pollTryOnSessionUntilTerminal({
         sessionId: createPayload.sessionId,
@@ -403,10 +422,28 @@ export function ProductTryOn({
       setPreviousResultUrl(null);
       setIsRestoredCompletedSession(false);
       setPhase("done");
+
+      if (!tryOnCompletedTrackedRef.current) {
+        trackAnalyticsEvent({
+          event: "try_on_completed",
+          surface: "try_on",
+          route_group: "/try",
+          outcome: "completed",
+        });
+        tryOnCompletedTrackedRef.current = true;
+      }
     } catch (err) {
       clearActiveTryOnSessionId(brandSlug, productSlug);
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      const message = err instanceof Error ? err.message : "Something went wrong.";
+      setError(message);
       setPhase("error");
+      trackAnalyticsEvent({
+        event: "try_on_failed",
+        surface: "try_on",
+        route_group: "/try",
+        outcome: "failed",
+        error_category: mapTryOnClientFailureCategory({ phase: activePhase, message }),
+      });
     }
   }, [
     brandSlug,
@@ -455,7 +492,7 @@ export function ProductTryOn({
           ) : null}
 
           {showUploadControls ? (
-            <>
+            <div className="space-y-4" data-ph-no-capture ph-no-capture="true">
               <Uploader
                 key={uploaderKey}
                 id="person"
@@ -491,7 +528,7 @@ export function ProductTryOn({
               >
                 {busy ? "Working on your try-on…" : GENERATE_TRY_ON_LABEL}
               </button>
-            </>
+            </div>
           ) : null}
 
           {phase === "done" ? (

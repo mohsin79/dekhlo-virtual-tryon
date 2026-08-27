@@ -46,7 +46,12 @@ export function Uploader({
   );
 
   return (
-    <div className="dl-up" style={{ background: "var(--color-bg)", borderRadius: "var(--radius-md)", padding: 20 }}>
+    <div
+      className="dl-up"
+      data-ph-no-capture
+      ph-no-capture="true"
+      style={{ background: "var(--color-bg)", borderRadius: "var(--radius-md)", padding: 20 }}
+    >
       <div className="flex items-center" style={{ gap: 12, marginBottom: 16 }}>
         <span style={{ fontFamily: "var(--font-heading)", fontSize: 30, color: indexColor, lineHeight: 1 }}>
           {index}

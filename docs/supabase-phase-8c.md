@@ -337,8 +337,117 @@ npm audit --omit=dev --registry=https://registry.npmjs.org/
 
 ---
 
-## 15. Future Phase 8C.2 — PostHog (not started)
+## 15. Phase 8C.2 — privacy-safe PostHog analytics (implemented, not runtime verified)
 
-Phase 8C.2 will evaluate product analytics (PostHog), consent gating, and event naming — separately from server error observability. Browser Sentry may be revisited after privacy review.
+**Status:** Implementation complete; **runtime verification not closed** in this phase.  
+**Package:** `posthog-js@1.421.2` (client-only; no `@posthog/next`, no server-side PostHog)
 
-Do not install PostHog or implement analytics consent until Phase 8C.2 is explicitly approved.
+### Architecture
+
+| Layer | Role |
+|-------|------|
+| `components/analytics/analytics-shell.tsx` | Root wrapper: provider, consent banner, pageview tracker |
+| `components/analytics/posthog-provider.tsx` | Consent-gated PostHog initialization (Strict Mode safe singleton) |
+| `components/analytics/analytics-consent-banner.tsx` | Non-blocking consent UI |
+| `components/analytics/pageview-tracker.tsx` | Explicit `$pageview` after consent (sanitized route groups only) |
+| `lib/analytics/consent.ts` | Cookie schema + parsing |
+| `lib/analytics/track.ts` | Strict typed tracking wrapper |
+| `lib/analytics/events.ts` | Event/property allowlists |
+| `lib/analytics/posthog-client.ts` | PostHog init/shutdown/capture (only direct `posthog.capture` site) |
+
+Sentry (Phase 8C.1) remains isolated: no PostHog identifiers sent to Sentry, no Sentry IDs sent to PostHog, no analytics consent attached to Sentry events.
+
+### Environment variables
+
+| Variable | Scope |
+|----------|-------|
+| `NEXT_PUBLIC_POSTHOG_KEY` | Public ingestion key (optional) |
+| `NEXT_PUBLIC_POSTHOG_HOST` | Public ingestion host (optional) |
+
+If either is absent, analytics safely no-ops. Local development does not require PostHog configuration.
+
+### Consent model
+
+Cookie: `dekhlo-analytics-consent`
+
+```json
+{ "v": 1, "state": "accepted" | "declined", "at": "<ISO8601>" }
+```
+
+States: `undecided`, `accepted`, `declined`
+
+- `Path=/`, `SameSite=Lax`, `Secure` in production, `Max-Age=31536000`
+- Browser-readable; contains **no user identifier**
+- Version mismatch => `undecided` (re-prompt)
+- `Analytics preferences` control resets to `undecided`
+
+**Legal note:** Final production consent copy and retention require legal/privacy review. This implementation does not claim GDPR/PECA/CCPA compliance.
+
+### PostHog initialization (accepted consent only)
+
+```typescript
+autocapture: false
+capture_pageview: false
+disable_session_recording: true
+capture_dead_clicks: false
+disable_surveys: true
+```
+
+No session replay, heatmaps, surveys, toolbar, identify/alias, or server-side PostHog.
+
+### Event allowlist (V1)
+
+- `signup_started`
+- `signup_completed`
+- `brand_created`
+- `product_created`
+- `try_on_started`
+- `try_on_completed`
+- `try_on_failed`
+- `lead_form_viewed`
+- `lead_submitted`
+- `dashboard_leads_viewed`
+
+Deferred: `platform_credit_grant_completed`, `platform_credit_revoke_completed`
+
+### Property allowlist
+
+- `surface`
+- `outcome`
+- `error_category`
+- `consent_version`
+- `route_group`
+
+Forbidden: email, phone, names, UUIDs, filenames, URLs, storage paths, tokens, search/query text, raw error messages, image data, lead/session/brand/product identifiers.
+
+### Identity strategy (V1)
+
+- **Public shoppers:** anonymous; no `identify()`, no `alias()`, no link to lead rows
+- **Merchants:** anonymous usage events only; **merchant `identify()` deferred**
+
+### No-capture surfaces
+
+Applied to:
+
+- `components/Uploader.tsx`
+- Person-photo area in `components/ProductTryOn.tsx`
+- Entire `components/leads/lead-capture-form.tsx`
+
+Attributes: `data-ph-no-capture` and `ph-no-capture`
+
+### Manual verification checklist (not closed)
+
+1. Load site with consent undecided => no PostHog network requests
+2. Accept analytics => PostHog initializes once; explicit events only
+3. Decline analytics => no requests; opt-out if previously accepted
+4. Verify no autocapture/replay/survey requests in Network tab
+5. Verify uploader/lead form/image areas excluded
+6. Verify Sentry events unchanged from Phase 8C.1 privacy rules
+
+---
+
+## 16. Future Phase 8C.3+ (not started)
+
+Further observability work (additional analytics events, merchant identity policy, browser Sentry review) remains deferred until explicitly approved.
+
+Do not mark Phase 8C.2 runtime verified until manual verification is complete.

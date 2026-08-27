@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Caprasimo, Figtree } from "next/font/google";
+import { AnalyticsShell } from "@/components/analytics/analytics-shell";
 import { Toaster } from "@/components/ui/sonner";
 import { site } from "@/lib/site";
 import "./globals.css";
@@ -78,7 +79,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${caprasimo.variable} ${figtree.variable}`}>
       <body>
-        {children}
+        <AnalyticsShell>{children}</AnalyticsShell>
         <Toaster richColors closeButton />
         <script
           type="application/ld+json"

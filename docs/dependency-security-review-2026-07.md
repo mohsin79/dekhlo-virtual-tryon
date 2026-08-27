@@ -190,6 +190,25 @@ npm run build              # pass
 
 ---
 
+## Phase 8C.2 — `posthog-js` (2026-08-27)
+
+Added **`posthog-js@1.421.2`** for client-side, consent-gated product analytics only.
+
+| Check | Result |
+|-------|--------|
+| `npm audit --omit=dev` after install | **0 vulnerabilities** |
+| Next.js peer compatibility | **16.2.11** (client-only SDK) |
+| React compatibility | **19.x** |
+| Server-side PostHog | **Not added** |
+
+Install method: `npm install posthog-js@1.421.2 --legacy-peer-deps`
+
+Production tree: `posthog-js@1.421.2` (direct dependency only; no `@posthog/next`).
+
+Run `npm ls posthog-js` after install to confirm dependency isolation.
+
+---
+
 ## Phase 8C.1 — `@sentry/nextjs` (2026-08-26)
 
 Added **`@sentry/nextjs@10.71.0`** for server-side error observability only (no browser SDK in this phase).

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LeadsDashboardAnalytics } from "@/components/analytics/analytics-event-hooks";
 import { LeadsFilters } from "@/components/leads/leads-filters";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUserContext } from "@/lib/auth/get-user-context";
@@ -86,6 +87,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
 
   return (
     <div className="space-y-8">
+      <LeadsDashboardAnalytics />
       <section className="space-y-2">
         <h1 className="font-heading text-3xl text-foreground">Leads</h1>
         <p className="max-w-2xl text-muted-foreground">

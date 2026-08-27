@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ProductsPendingAnalytics } from "@/components/analytics/analytics-event-hooks";
 import { DeleteProductButton } from "@/components/products/delete-product-button";
 import { ProductImage } from "@/components/products/product-image";
 import { ToggleProductActiveButton } from "@/components/products/toggle-product-active-button";
@@ -37,6 +38,7 @@ export default async function ProductsPage() {
 
   return (
     <div className="space-y-8">
+      <ProductsPendingAnalytics />
       <section className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-2">
           <h1 className="font-heading text-3xl text-foreground">Products</h1>

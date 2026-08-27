@@ -1,18 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import { signupAction, type AuthActionState } from "@/app/auth/actions";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { markPendingAnalyticsEvent } from "@/lib/analytics/pending-events";
+import { trackAnalyticsEvent } from "@/lib/analytics/track";
 
 const initialState: AuthActionState = {};
 
 export function SignUpForm() {
   const [state, formAction, pending] = useActionState(signupAction, initialState);
+
+  useEffect(() => {
+    if (state.success) {
+      trackAnalyticsEvent({
+        event: "signup_completed",
+        surface: "auth",
+        route_group: "/auth",
+        outcome: "completed",
+      });
+    }
+  }, [state.success]);
 
   return (
     <Card className="border-border/80 bg-surface/80 shadow-md backdrop-blur-sm">
@@ -26,7 +39,18 @@ export function SignUpForm() {
             <AlertDescription>{state.success}</AlertDescription>
           </Alert>
         ) : (
-          <form action={formAction} className="space-y-5">
+          <form
+            action={formAction}
+            className="space-y-5"
+            onSubmit={() => {
+              trackAnalyticsEvent({
+                event: "signup_started",
+                surface: "auth",
+                route_group: "/auth",
+              });
+              markPendingAnalyticsEvent("signup_completed");
+            }}
+          >
             {state.error ? (
               <Alert variant="destructive">
                 <AlertDescription>{state.error}</AlertDescription>

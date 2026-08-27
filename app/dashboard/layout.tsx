@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { DashboardPendingAnalytics } from "@/components/analytics/analytics-event-hooks";
 import { DashboardShellClient } from "@/components/dashboard/dashboard-shell-client";
 import { requireUserContext } from "@/lib/auth/get-user-context";
 
@@ -13,5 +14,10 @@ export default async function DashboardLayout({
     redirect("/onboarding");
   }
 
-  return <DashboardShellClient context={context}>{children}</DashboardShellClient>;
+  return (
+    <DashboardShellClient context={context}>
+      <DashboardPendingAnalytics />
+      {children}
+    </DashboardShellClient>
+  );
 }

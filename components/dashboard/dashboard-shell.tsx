@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnalyticsPreferencesControl } from "@/components/analytics/analytics-preferences-control";
 import { LogoutButton } from "@/components/dashboard/logout-button";
 import { Logo } from "@/components/Logo";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -114,6 +115,7 @@ export function DashboardShell({
           <SidebarNav pathname={pathname} context={context} />
           <div className="mt-auto space-y-3">
             <Separator />
+            <AnalyticsPreferencesControl />
             <LogoutButton />
           </div>
         </aside>

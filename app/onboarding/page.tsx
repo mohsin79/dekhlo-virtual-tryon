@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { OnboardingForm } from "@/components/auth/onboarding-form";
+import { OnboardingPendingAnalytics } from "@/components/analytics/analytics-event-hooks";
 import { Logo } from "@/components/Logo";
 import { requireUserContext } from "@/lib/auth/get-user-context";
 
@@ -19,6 +20,7 @@ export default async function OnboardingPage() {
             <Logo />
           </Link>
         </div>
+        <OnboardingPendingAnalytics />
         <OnboardingForm />
       </div>
     </div>

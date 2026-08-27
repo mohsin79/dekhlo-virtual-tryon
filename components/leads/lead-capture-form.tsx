@@ -8,6 +8,7 @@ import {
 } from "@/lib/leads/public-response";
 import { readLeadFormDismissed, writeLeadFormDismissed } from "@/lib/leads/dismiss-storage";
 import { parseLeadCaptureBody } from "@/lib/leads/validation";
+import { trackAnalyticsEvent } from "@/lib/analytics/track";
 
 type LeadStatusState = "loading" | "ready" | "submitted" | "unavailable" | "status-error";
 
@@ -56,6 +57,7 @@ export function LeadCaptureForm({ sessionId, brandName }: LeadCaptureFormProps) 
   const [submitting, setSubmitting] = useState(false);
   const [clientError, setClientError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const leadFormViewedRef = useRef(false);
 
   useEffect(() => {
     statusAbortRef.current?.abort();
@@ -105,6 +107,18 @@ export function LeadCaptureForm({ sessionId, brandName }: LeadCaptureFormProps) 
       controller.abort();
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (statusState === "ready" && !dismissed && !leadFormViewedRef.current) {
+      leadFormViewedRef.current = true;
+      trackAnalyticsEvent({
+        event: "lead_form_viewed",
+        surface: "lead",
+        route_group: "/try",
+        outcome: "viewed",
+      });
+    }
+  }, [dismissed, statusState]);
 
   const handleDismiss = useCallback(() => {
     writeLeadFormDismissed(sessionId, true);
@@ -167,6 +181,13 @@ export function LeadCaptureForm({ sessionId, brandName }: LeadCaptureFormProps) 
           if (payload) {
             assertExactResponseKeys(payload, LEAD_POST_RESPONSE_KEYS);
           }
+
+          trackAnalyticsEvent({
+            event: "lead_submitted",
+            surface: "lead",
+            route_group: "/try",
+            outcome: "submitted",
+          });
 
           setStatusState("submitted");
           setStatusMessage("Thank you. The merchant may contact you about this try-on.");
@@ -255,7 +276,11 @@ export function LeadCaptureForm({ sessionId, brandName }: LeadCaptureFormProps) 
   const formErrorId = `${formId}-form-error`;
 
   return (
-    <div className="space-y-4 rounded-xl border border-border/70 bg-surface/60 p-4 md:p-6">
+    <div
+      className="space-y-4 rounded-xl border border-border/70 bg-surface/60 p-4 md:p-6"
+      data-ph-no-capture
+      ph-no-capture="true"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
           <h3 className="font-heading text-xl text-foreground">Share your details with {brandName}</h3>

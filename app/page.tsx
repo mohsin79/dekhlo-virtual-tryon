@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnalyticsPreferencesFooter } from "@/components/analytics/analytics-preferences-footer";
 import { Logo } from "@/components/Logo";
 
 export default function Home() {
@@ -82,6 +83,7 @@ export default function Home() {
             </div>
           </div>
         </section>
+        <AnalyticsPreferencesFooter />
       </div>
     </div>
   );
