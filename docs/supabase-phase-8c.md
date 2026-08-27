@@ -1,7 +1,8 @@
 # Phase 8C — Observability and privacy-safe error handling
 
-**Status:** Phase 8C.1 complete (server-side Sentry only)  
+**Status:** Phase 8C.1 **runtime verified and closed** (server-side Sentry only)  
 **Branch:** `B2B-saas-implementation`  
+**Implementation commits:** `7a4b452` (feat), `2e1767e` (privacy hardening)  
 **Scope:** Server-side error observability, deep scrubbing, and client-safe error sanitization. PostHog, browser Sentry, and analytics consent are deferred to Phase 8C.2+.
 
 ---
@@ -202,7 +203,141 @@ Build without any Sentry credentials must succeed. With `SENTRY_DSN` unset, wrap
 
 ---
 
-## 14. Future Phase 8C.2 — PostHog (not started)
+## 14. Phase 8C.1 runtime verification (closed)
+
+Verified on branch `B2B-saas-implementation` after commits `7a4b452` and `2e1767e`. Phase 8C.1 is **runtime verified and closed**.
+
+### Sentry project / runtime
+
+| Check | Result |
+|-------|--------|
+| Sentry project configured | Pass |
+| `SENTRY_DSN` configured locally (value not committed) | Pass |
+| `SENTRY_ENVIRONMENT=development` for verification | Pass |
+| `SENTRY_RELEASE=phase8c1-local` for verification | Pass |
+| Server-side Sentry initialization | Pass |
+| `captureUnexpectedError` delivered synthetic server event | Pass |
+| Event appeared in configured Sentry project | Pass |
+| `routeCategory=diagnostic` | Pass |
+| `operation=sentry_smoke` | Pass |
+| `errorCategory=verification` | Pass |
+| `environment=development` | Pass |
+| `release=phase8c1-local` | Pass |
+
+No account IDs, project IDs, DSN values, auth tokens, or organization secrets are recorded in this document.
+
+### SDK privacy hardening
+
+Final received event confirmed **absence** of:
+
+- `server_name` / machine hostname
+- browser context
+- client OS context
+- device context
+- locale / culture context
+- timezone context
+- User-Agent
+- request headers
+- Cookie
+- Authorization
+- Set-Cookie
+- X-Forwarded-For
+- Referer
+- request body
+- raw query string
+- Supabase auth token
+- try-on session token
+- API key
+- signed URL
+- storage path
+- lead email
+- lead phone
+- lead full name
+- customer image data
+
+**Safe retained diagnostics:**
+
+- `environment`
+- `release`
+- `routeCategory`
+- `operation`
+- `errorCategory`
+- generic Node runtime name/version
+- sanitized route/method
+- sanitized breadcrumbs
+
+### Sentry-side privacy settings
+
+Sentry project privacy configuration was also hardened:
+
+- IP storage prevention / IP scrubbing enabled
+- Advanced data scrubbing configured to remove user geography
+- Subsequent new event verified that User → Geography was no longer present
+
+### Browser architecture verification
+
+| Check | Result |
+|-------|--------|
+| No `instrumentation-client.ts` | Pass |
+| No `NEXT_PUBLIC_SENTRY_DSN` | Pass |
+| No browser Sentry initialization | Pass |
+| Browser Network inspection: no Sentry ingestion requests | Pass |
+| No Session Replay | Pass |
+| No profiling | Pass |
+| `tracesSampleRate = 0` | Pass |
+| No user identify/enrichment | Pass |
+
+### Application behavior
+
+| Check | Result |
+|-------|--------|
+| Demo provider/OpenAI errors remain sanitized for clients | Pass |
+| Raw provider error messages do not reach clients | Pass |
+| `OPENAI_API_KEY` hints do not reach clients | Pass |
+| Expected 400/401/403/404/409/410/415/422/429 outcomes remain excluded | Pass |
+| Mapped lead/platform RPC errors remain excluded | Pass |
+| Transient Inngest retries are not individually reported | Pass |
+| Terminal Inngest failures use server-side observability | Pass |
+| Cleanup terminal failures are capturable | Pass |
+| Unexpected server/infrastructure failures remain capturable | Pass |
+
+### Temporary verification route
+
+- `app/api/dev/sentry-smoke/route.ts` was used **only** for local testing
+- It was **never committed**
+- It was **removed** after verification
+
+### Lint baseline
+
+- Verified baseline: **4 warnings, 0 errors**
+- Phase 8C.1 introduced **no persistent new lint warning**
+
+### Final regression (Phase 8C.1 closure)
+
+| Check | Result |
+|-------|--------|
+| pgTAP | **360 pass** (20 files) |
+| Unit tests | **192 pass** |
+| TypeScript (`tsc --noEmit`) | Pass |
+| Lint | Pass — **4 warnings, 0 errors** |
+| Build | Pass — Next.js **16.2.11** |
+| Production npm audit | **0 vulnerabilities** |
+
+Commands:
+
+```bash
+npx supabase db reset --local
+npx supabase test db --local
+npm run test:unit
+npx tsc --noEmit
+npm run lint
+npm run build
+npm audit --omit=dev --registry=https://registry.npmjs.org/
+```
+
+---
+
+## 15. Future Phase 8C.2 — PostHog (not started)
 
 Phase 8C.2 will evaluate product analytics (PostHog), consent gating, and event naming — separately from server error observability. Browser Sentry may be revisited after privacy review.
 
