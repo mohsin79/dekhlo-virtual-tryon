@@ -1,8 +1,13 @@
 import { withSentryConfig } from "@sentry/nextjs";
 
+import { securityHeadersFromEnv } from "./lib/security/headers.mjs";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  async headers() {
+    return [{ source: "/:path*", headers: securityHeadersFromEnv() }];
+  },
   // Try-on returns a large base64 image from the route handler.
   experimental: {
     serverActions: { bodySizeLimit: "12mb" },

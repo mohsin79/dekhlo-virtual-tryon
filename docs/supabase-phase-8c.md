@@ -1141,11 +1141,194 @@ Phase 8C.3B is **not** runtime verified. Still to confirm manually:
 
 ---
 
-## 18. Future Phase 8C.3C+ (not started)
+## 18. Phase 8C.3C — browser security headers and CSP Report-Only
 
-Remaining Phase 8C.3 work from the preflight audit — security headers and CSP (Report-Only first) —
-remains deferred until explicitly approved, as does the L1 session existence-oracle normalization and
-the framing policy decision tied to the merchant-embedding model.
+Third Phase 8C.3 slice. Addresses the preflight security-header finding. **No CSP is enforced**: the
+purpose of this slice is to observe real application requirements before enforcement.
+
+Phase 8C.3 as a whole is **not closed**. Runtime verification for 8C.3C is **pending**.
+
+### Where headers are configured
+
+`lib/security/headers.mjs` is a plain ESM builder imported by `next.config.mjs`, which applies the
+set to every route via `headers()` with `source: "/:path*"`. Plain ESM (not TypeScript) so the Next.js
+config can import it directly while unit tests exercise the same builders rather than a copy.
+
+The builder reads **only** `NODE_ENV`, `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_POSTHOG_HOST`. A
+test enumerates every `env.*` read in the module and fails if anything other than `NODE_ENV` or a
+`NEXT_PUBLIC_` variable appears, so a server-only secret cannot drift into a response header.
+
+### Emitted headers
+
+| Header | Value | Scope |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | all environments |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | all environments |
+| `Permissions-Policy` | `camera=(self), geolocation=(), microphone=()` | all environments |
+| `Content-Security-Policy-Report-Only` | see below | all environments |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | **production only** |
+
+`camera=(self)` is deliberate rather than `camera=()`: shopper image capture may legitimately use the
+local device camera. `preload` is deliberately **not** added to HSTS in this phase, and HSTS is not
+emitted in local development where it is meaningless over plain http and would poison the localhost
+origin in the developer's browser.
+
+### Report-Only CSP
+
+Production policy:
+
+```
+default-src 'self';
+base-uri 'self';
+object-src 'none';
+form-action 'self';
+script-src 'self' 'unsafe-inline';
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob: <supabase-origin>;
+font-src 'self' data:;
+connect-src 'self' <supabase-origin> <posthog-origin>;
+worker-src 'self' blob:
+```
+
+Development differs in exactly two ways, and the production policy was not weakened to accommodate
+either:
+
+- `script-src` additionally allows `'unsafe-eval'`, which Next.js dev tooling (webpack HMR, React
+  Refresh) requires. Production App Router output does not evaluate generated code, so
+  `'unsafe-eval'` never reaches the production policy — enforced by a test.
+- `connect-src` additionally allows `ws://localhost:*` and `ws://127.0.0.1:*` for the HMR websocket.
+  CSP3 `'self'` should cover a same-origin `ws://` upgrade, but browser behavior has varied.
+
+Directive rationale, verified against actual source rather than assumed:
+
+- `script-src 'unsafe-inline'` — required until App Router bootstrap payloads are nonce-tagged via
+  middleware, which is an enforcement-phase change.
+- `style-src 'unsafe-inline'` — Tailwind and Next.js inject inline style attributes.
+- `img-src data:` — the demo flow returns a base64 `data:image/png` result.
+- `img-src blob:` — uploader and product-form previews use `URL.createObjectURL`.
+- `worker-src blob:` — keeps Blob-backed workers available to client libraries.
+
+### Derived external origins
+
+Only two, both from public configuration, both reduced to a bare origin via `new URL().origin`:
+
+| Source | From | Used for |
+|---|---|---|
+| Supabase origin | `NEXT_PUBLIC_SUPABASE_URL` | `img-src` (product and signed images), `connect-src` (auth, storage, REST) |
+| PostHog origin | `NEXT_PUBLIC_POSTHOG_HOST` | `connect-src` (client ingestion) |
+
+Paths, query strings and credentials are stripped, so a configured URL cannot carry a key, token or
+DSN fragment into a header. Absent, empty, malformed or non-http(s) configuration yields no source at
+all rather than the literal string `undefined`. When neither is configured the policy is still valid
+and simply has no external origins.
+
+### Origins deliberately absent
+
+Not guessed at, and each verified against source:
+
+- **OpenAI** — called only from server route handlers; the browser never contacts it.
+- **Sentry** — Phase 8C.1 is server-side only; there is no browser DSN or client init.
+- **Inngest** — no browser source calls Inngest directly.
+- **Google Fonts** — `next/font/google` (Caprasimo, Figtree) self-hosts at build time and serves from
+  `/_next/static`, so `font-src 'self'` is sufficient and no `gstatic`/`googleapis` origin is needed.
+- **Supabase websockets** — no `.channel()` or realtime subscription exists in client source, so no
+  `wss:` origin is included.
+- **PostHog remote extension scripts** — surveys, replay and exception autocapture are all disabled in
+  Phase 8C.2, so PostHog is not added to `script-src`. If the Report-Only window shows an attempted
+  remote script load, that is a signal worth investigating rather than a source to pre-authorize.
+
+No wildcard source, no wildcard host, and no bare `https:`/`http:` scheme source appears in any
+directive; a test walks every directive to enforce this.
+
+### Deliberately deferred
+
+| Deferred | Why |
+|---|---|
+| Enforcing `Content-Security-Policy` | Report-Only first, so real violations are observed before anything can break |
+| `X-Frame-Options` | The merchant try-on surface may later be embedded on merchant websites |
+| `frame-ancestors` | Same — a blanket `DENY`/`SAMEORIGIN`/`'none'` would be a future product regression |
+| `Cross-Origin-Opener-Policy` | Must be evaluated together with embedding and external-resource requirements |
+| `Cross-Origin-Resource-Policy` | Same |
+| `Cross-Origin-Embedder-Policy` | Same |
+| HSTS `preload` | Not requested in this phase |
+| `report-uri` / `report-to` | No privacy-safe collector exists; no DB-backed collector or third-party reporting service was added |
+
+**A regression guard test** scans `lib/security/headers.mjs` and `next.config.mjs` for
+`X-Frame-Options`, `frame-ancestors`, `DENY` and `SAMEORIGIN` outside comments, so a global
+restrictive framing rule cannot be introduced accidentally during this phase. Dashboard and platform
+framing policy will be designed together with the merchant embedding model.
+
+### Report-Only expectations
+
+A CSP violation in this phase **cannot break functionality** — the browser reports and continues.
+Violations appearing in the DevTools console during the observation window are expected. Development-only
+violations must not be suppressed by adding broad unsafe sources to the production policy.
+
+Because no report endpoint exists, collection is manual browser-console inspection during runtime
+verification.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `lib/security/headers.mjs` | New — header set and Report-Only CSP builder, origin derivation |
+| `next.config.mjs` | Added `headers()` applying the set to `/:path*` |
+| `tests/unit/phase8c3c-security-headers.test.ts` | New — 30 tests |
+
+No application, authentication, RLS, credit, lead, OpenAI, Inngest, storage, retention, rate-limit,
+Sentry or PostHog behavior changed. No migration.
+
+### Phase 8C.3C regression
+
+| Check | Result |
+|---|---|
+| pgTAP | 360 pass |
+| Unit tests | 350 -> **380** pass (30 new) |
+| TypeScript | pass |
+| Lint | 4 warnings, 0 errors (baseline unchanged) |
+| Build | pass, Next.js 16.2.11 unchanged |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+
+### Manual CSP verification checklist — PENDING
+
+Load each surface with the DevTools console open, record every CSP violation, and confirm the page
+still works (Report-Only must never block). Also confirm the response headers on each navigation.
+
+| Surface | Check |
+|---|---|
+| Homepage `/` | Renders, fonts and styles load, no unexpected violation |
+| Auth `/auth` login and signup | Forms submit (`form-action 'self'`), Supabase auth request succeeds |
+| Merchant try-on `/try/<brand>/<product>` | Product image loads from the Supabase origin |
+| Upload preview | `blob:` preview renders after selecting a person photo |
+| Completed result | Generated result image renders (signed Supabase URL, and `data:` on the demo flow) |
+| Lead form | Renders and submits successfully |
+| Dashboard `/dashboard` | Loads, styles intact, Supabase session refresh succeeds |
+| Dashboard leads `/dashboard/leads` | Leads load and render |
+| Platform admin | Loads; credit grant/revoke submit successfully |
+| PostHog ingestion | With consent accepted, `connect-src` permits `us.i.posthog.com`; no violation and no remote script load attempt |
+| Supabase image/storage | Product images and signed result URLs load with no `img-src` violation |
+
+Also confirm at the header level:
+
+- `Strict-Transport-Security` present in a production deployment and **absent** on localhost
+- `Content-Security-Policy-Report-Only` present and enforcing `Content-Security-Policy` absent
+- no `X-Frame-Options`, no `frame-ancestors`, no COOP/CORP/COEP
+- `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` present on both page and API
+  responses
+
+Enforcement is a later decision: only after the observation window shows a clean or well-understood
+violation set should `Content-Security-Policy` be considered, most likely alongside nonce-based
+script tagging to drop `'unsafe-inline'`.
+
+**Phase 8C.3 is not closed.**
+
+---
+
+## 19. Future Phase 8C.4+ (not started)
+
+CSP enforcement, the L1 session existence-oracle normalization, the framing policy decision tied to
+the merchant-embedding model, and the COOP/CORP/COEP evaluation remain deferred until explicitly
+approved.
 
 Further observability work (additional analytics events, merchant identity policy, browser Sentry review) remains deferred until explicitly approved.
 
