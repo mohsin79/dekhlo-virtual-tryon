@@ -5,7 +5,10 @@ import {
   assertSameOrigin,
   genericErrorResponse,
   jsonNoStore,
+  rateLimitedResponse,
+  serviceUnavailableResponse,
 } from "@/lib/api/security";
+import { limitPlatformCreditMutation } from "@/lib/rate-limit";
 import { getAuthenticatedUser } from "@/lib/auth/get-user-context";
 import { isPlatformAdminProfile } from "@/lib/platform/is-platform-admin-profile";
 import { PLATFORM_MAX_JSON_BODY_BYTES } from "@/lib/platform/constants";
@@ -71,6 +74,19 @@ export async function handlePlatformCreditMutation(
 
   if (!profile || !isPlatformAdminProfile(profile)) {
     return genericErrorResponse("Platform administrator access required.", 403);
+  }
+
+  // Defence in depth only: authorization above remains authoritative. Runs after authn and
+  // authz so unauthenticated and non-platform-admin traffic cannot consume an actor bucket,
+  // and before validation and the RPC so a looping client cannot flood the database.
+  const rate = await limitPlatformCreditMutation(user.id);
+
+  if (rate.outcome === "limited") {
+    return rateLimitedResponse();
+  }
+
+  if (rate.outcome === "unavailable") {
+    return serviceUnavailableResponse();
   }
 
   let body: unknown;

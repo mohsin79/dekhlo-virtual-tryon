@@ -7,7 +7,9 @@ import {
   genericErrorResponse,
   jsonNoStore,
   rateLimitedResponse,
+  serviceUnavailableResponse,
 } from "@/lib/api/security";
+import { combineRateLimitDecisions } from "@/lib/rate-limit/decision";
 import { DEMO_MAX_MULTIPART_BODY_BYTES } from "@/lib/try-on/demo-constants";
 import { validatePersonPhotoBuffer } from "@/lib/try-on/sessions/person-validation";
 import { bufferToDataUrl, generateTryOnImage, TRY_ON_SERVICE_UNAVAILABLE_MESSAGE } from "@/lib/try-on/generate";
@@ -42,18 +44,17 @@ export async function handleDemoTryOn(request: Request) {
     return genericErrorResponse("Invalid request origin.", 403);
   }
 
-  try {
-    const ip = getClientIp(request);
-    const [ipLimit, globalLimit] = await Promise.all([
-      limitDemoByIp(ip),
-      limitDemoGlobal(),
-    ]);
+  const networkRateLimit = combineRateLimitDecisions(
+    await Promise.all([limitDemoByIp(getClientIp(request)), limitDemoGlobal()]),
+  );
 
-    if (!ipLimit.success || !globalLimit.success) {
-      return rateLimitedResponse();
-    }
-  } catch {
+  if (networkRateLimit === "limited") {
     return rateLimitedResponse();
+  }
+
+  // Fail closed: no generation runs without a trustworthy verdict.
+  if (networkRateLimit === "unavailable") {
+    return serviceUnavailableResponse();
   }
 
   const cookieStore = await cookies();
@@ -70,14 +71,14 @@ export async function handleDemoTryOn(request: Request) {
     });
   }
 
-  try {
-    const cookieLimit = await limitDemoByCookie(demoCookie);
+  const cookieLimit = await limitDemoByCookie(demoCookie);
 
-    if (!cookieLimit.success) {
-      return rateLimitedResponse();
-    }
-  } catch {
+  if (cookieLimit.outcome === "limited") {
     return rateLimitedResponse();
+  }
+
+  if (cookieLimit.outcome === "unavailable") {
+    return serviceUnavailableResponse();
   }
 
   if (!process.env.OPENAI_API_KEY) {

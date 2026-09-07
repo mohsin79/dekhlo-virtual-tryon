@@ -7,6 +7,7 @@ import {
   genericErrorResponse,
   jsonNoStore,
   rateLimitedResponse,
+  serviceUnavailableResponse,
 } from "@/lib/api/security";
 import {
   LEAD_MAX_JSON_BODY_BYTES,
@@ -24,6 +25,7 @@ import {
   limitLeadCaptureBySession,
   limitLeadCaptureGlobal,
 } from "@/lib/rate-limit";
+import { combineRateLimitDecisions } from "@/lib/rate-limit/decision";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { authorizeTryOnSessionForLead } from "@/lib/try-on/sessions/lead-session-auth";
 import type { NextResponse } from "next/server";
@@ -69,14 +71,21 @@ export async function handleLeadCapturePost(
 
   const session = auth.value.session;
 
-  const [sessionLimit, ipLimit, globalLimit] = await Promise.all([
-    limitLeadCaptureBySession(session.id),
-    limitLeadCaptureByIp(request),
-    limitLeadCaptureGlobal(),
-  ]);
+  const rateLimit = combineRateLimitDecisions(
+    await Promise.all([
+      limitLeadCaptureBySession(session.id),
+      limitLeadCaptureByIp(request),
+      limitLeadCaptureGlobal(),
+    ]),
+  );
 
-  if (!sessionLimit.success || !ipLimit.success || !globalLimit.success) {
+  if (rateLimit === "limited") {
     return rateLimitedResponse();
+  }
+
+  // Fail closed: without a trustworthy verdict the lead is not created and no RPC runs.
+  if (rateLimit === "unavailable") {
+    return serviceUnavailableResponse();
   }
 
   if (session.completed_at) {

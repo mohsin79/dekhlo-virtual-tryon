@@ -923,10 +923,227 @@ headers and CSP) have not been started.
 
 ---
 
-## 17. Future Phase 8C.3B+ (not started)
+## 17. Phase 8C.3B — fail-closed rate-limit infrastructure
 
-Remaining Phase 8C.3 work from the preflight audit — lead rate-limit fail-closed policy and timeout
-handling, platform credit mutation rate limiting, security headers, and CSP (Report-Only first) —
+Second Phase 8C.3 slice. Addresses preflight findings **H1** (Upstash timeout failed open), **M4**
+(lead limiter failures surfaced as 500) and **M1** (platform credit mutations had no application
+limiter). Security headers and CSP remain out of scope.
+
+Phase 8C.3 as a whole is **not closed**. Runtime verification for 8C.3B is **pending**.
+
+### The fail-open defect
+
+`@upstash/ratelimit@2.0.8` defaults `timeout` to 5000 ms and, when that timeout wins its internal
+race, **resolves** rather than rejects — with `success: true` and `reason: "timeout"`. The previous
+Dekhlo wrapper forwarded `success` and discarded `reason`, so a slow Redis silently lifted every
+limit on the public lead endpoint. Verified directly against the installed package, and a unit test
+now reads `node_modules/@upstash/ratelimit/dist/index.mjs` so the behavior stays pinned.
+
+### Three-valued decision model
+
+A boolean cannot distinguish "evaluated and within the limit" from "never evaluated", so
+`lib/rate-limit/decision.ts` replaces it with an explicit outcome:
+
+| Outcome | Meaning | HTTP |
+|---|---|---|
+| `allowed` | Provider evaluated the request and the limit was not exceeded | continue |
+| `limited` | Provider evaluated the request and the limit **was** exceeded | **429** |
+| `unavailable` | Provider was not consulted, or its answer cannot be trusted | **503** |
+
+`unavailable` covers: Upstash timeout (`reason: "timeout"`), network/DNS exceptions, missing
+production credentials, an unresolvable rate-limit hash secret, and malformed or unexpected provider
+responses (non-object, missing `success`, non-boolean `success`).
+
+The documented reasons `cacheBlock` and `denyList` accompany a **real** denial and remain ordinary
+rate limiting, not `unavailable`.
+
+`combineRateLimitDecisions()` reduces several verdicts for one request. Precedence: a definite
+denial wins over `unavailable` — both reject, and 429 is the more precise answer when at least one
+limit is known to be exceeded. An empty verdict set is `unavailable`, never `allowed`.
+
+### Explicit provider timeout
+
+`UPSTASH_LIMIT_TIMEOUT_MS = 2000` is passed as the documented `timeout` option on every
+Upstash-backed limiter — tighter than the 5000 ms library default. A timeout is classified
+`unavailable`; `success: true` is never trusted when `reason` is `timeout`.
+
+Limiter construction and evaluation are wrapped so that **no** initialization or provider failure
+escapes as an unhandled rejection. The memoized limiter promise is cleared on failure so a later
+request retries instead of inheriting a permanently rejected promise.
+
+### Production vs development
+
+Unchanged: when Upstash configuration is intentionally absent in local development, the in-memory
+limiter is still used and limits still apply per process. In **production** a missing
+`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` throws inside limiter construction, which the
+wrapper converts to `unavailable` — so production fails closed instead of silently downgrading.
+
+**No threshold or window changed in this slice.**
+
+### All rate-limiter callers and namespaces
+
+Audited from source; these are the complete set. No additional callers were found.
+
+| Namespace | Limit | Window | Caller |
+|---|---|---|---|
+| `lead-session` | 5 | 1 h | public lead POST |
+| `lead-ip` | 30 | 1 h | public lead POST |
+| `lead-global` | 200 | 1 h | public lead POST |
+| `tryon-session-create` | 20 | 1 h | try-on session create |
+| `demo-ip` | 30 | 1 h | public demo |
+| `demo-cookie` | 5 | 1 d | public demo |
+| `demo-global` | `DEMO_DAILY_CAP` (500) | 1 d | public demo |
+| `platform-credit-actor` | **30** | **1 m** | **new** — platform credit grant/revoke |
+
+Every caller now maps `allowed` → continue, `limited` → 429, `unavailable` → 503. No public route
+interprets infrastructure failure as success, and no infrastructure failure is reported as 429.
+
+### Public lead POST (H1, M4)
+
+All three limits are preserved unchanged. Previously a limiter exception propagated as an unhandled
+500 and a timeout was treated as success; now:
+
+- any limiter denies → **429** (unchanged message)
+- timeout, exception, missing production configuration, or malformed response → **503**
+  `Service temporarily unavailable.`
+
+`create_try_on_lead` does not run and no lead is created on either path — the fail-closed return
+precedes the RPC. Responses stay `Cache-Control: no-store`, and no provider name, timeout detail,
+credential state, or network diagnostic reaches the client.
+
+### Try-on session create
+
+Threshold, window and route position unchanged; no ordering bug was found. `limited` → 429,
+`unavailable` → 503. Neither path inserts a session row or reserves a credit. The previous
+catch-all `try/catch` around the limiter is gone, replaced by explicit outcome handling.
+
+### Public demo
+
+Both limiter blocks (network `demo-ip` + `demo-global`, then `demo-cookie`) corrected. The handler
+previously caught limiter failures and returned **429**, conflating infrastructure failure with a
+real denial; it now returns **503** for `unavailable`. No OpenAI generation runs after an
+`unavailable` verdict. Kill switch, same-origin check, the Phase 8C.3A multipart bound, per-file
+8 MB validation, thresholds, and generation behavior for allowed traffic are unchanged.
+
+### Platform credit mutation limiter (M1)
+
+Applies to `POST /api/platform/credits/grant` and `POST /api/platform/credits/revoke`.
+
+| | |
+|---|---|
+| Limit | 30 per minute per authenticated platform admin actor |
+| Namespace | `platform-credit-actor`, shared by grant **and** revoke |
+| Order | authentication → platform authorization → **limiter** → body validation → RPC |
+| Limited | 429 |
+| Unavailable | 503 |
+
+Existing controls remain authoritative; the limiter is **defence in depth only**. Session
+authentication, `loadPlatformAdminProfile` / `isPlatformAdminProfile`, the DB-side `platform_admin`
+recheck, server-derived `p_actor`, idempotency, advisory-lock atomicity and immutable audit logs are
+all unchanged.
+
+Because the limiter runs after authorization, unauthenticated (401) and non-platform-admin (403)
+traffic never consumes an actor bucket — a merchant owner or admin role alone cannot reach it.
+
+**"Attempt" means a limiter-approved HTTP mutation request, not a successful database mutation.** One
+unit is consumed per authenticated platform-admin request that reaches the limiter, before body
+validation and before the RPC, so a looping or repeatedly-failing client cannot flood the database.
+
+Grant and revoke deliberately share one bucket. Separate per-operation buckets would effectively
+double the intended per-actor budget.
+
+On either 429 or 503: no credit RPC executes, no credit is mutated, no audit or ledger row is
+written, and RPC arguments and idempotency behavior are untouched.
+
+### Platform actor identifier privacy
+
+The raw Supabase user UUID is **never** the limiter key and is never logged. `limitPlatformCreditMutation`
+derives a deterministic namespaced HMAC-SHA256 identifier via
+`hashRateLimitIdentifier(namespace, value, secret)` in `lib/rate-limit/identifier-hash.ts`. The
+namespace is part of the HMAC message, so the same input hashed for two limiters cannot be correlated
+across namespaces.
+
+`hashLeadRateLimitIp` is **deliberately left intact**. It uses a salted SHA-256 over `secret:value`;
+re-basing it on HMAC would rotate every live lead rate-limit key mid-window. The generic helper is
+therefore additive and used for new identifiers only, and a test pins the lead construction.
+
+Secret: the existing `LEAD_RATE_LIMIT_HASH_SECRET` is reused through a new neutral accessor
+`getRateLimitHashSecret()`. **No second secret was introduced and no production env var was renamed.**
+The variable is now semantically broader than lead capture — a documented, deliberate decision. If
+the secret cannot be resolved (production, unset), the verdict is `unavailable` and the request fails
+closed.
+
+### Observability decision
+
+Expected 429 denials are **not** sent to Sentry, consistent with the Phase 8C.1 capture policy.
+
+`unavailable` 503 paths are also **not** captured in this slice. Capturing per request would emit one
+Sentry event for every rejected request during a provider outage, and no rate-controlled operational
+mechanism exists yet; building one is out of scope here. The rate-limit module contains no Sentry or
+PostHog calls, and logs no raw IP, actor UUID, hashed identifier, lead PII, session token or cookie.
+
+### Trusted-proxy assumption
+
+`getClientIp` header-selection logic is **unchanged** in this slice. Its safety depends on the
+production reverse proxy overwriting or sanitizing `X-Forwarded-For`. A documented note now sits at
+the function: not all proxies behave this way — one that appends instead would let a client prepend
+an arbitrary value and rotate IP-scoped buckets — so if the deployment moves away from that proxy
+model, the header trust policy must be reviewed. No hop-count logic was implemented, as that would
+require deployment evidence.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `lib/rate-limit/decision.ts` | New — three-valued model, Upstash classifier, verdict combination |
+| `lib/rate-limit/identifier-hash.ts` | New — generic namespaced HMAC identifier helper |
+| `lib/rate-limit/index.ts` | 2000 ms timeout, fail-closed lazy limiters, platform limiter, proxy note |
+| `lib/rate-limit/lead-ip-hash.ts` | Unchanged (intentionally) |
+| `lib/env.ts` | Added `getRateLimitHashSecret()` accessor |
+| `lib/api/security.ts` | Added `serviceUnavailableResponse()` (503, no-store) |
+| `lib/leads/handle-lead-capture.ts` | 429 vs 503, fails closed before the lead RPC |
+| `app/api/try-on/sessions/route.ts` | 429 vs 503, replaced catch-all |
+| `lib/try-on/demo-handler.ts` | 429 vs 503 on both limiter blocks |
+| `lib/platform/handle-credit-mutation.ts` | Actor limiter after authn/authz, before validation and RPC |
+| `tests/unit/phase8c3b-rate-limit-failclosed.test.ts` | New — 50 tests |
+
+### No database changes
+
+Phase 8C.3B makes **no** schema, RLS, RPC, migration or storage-policy change. Credit RPC semantics,
+lead schema and business semantics, retention, and OpenAI/Inngest generation architecture are
+untouched. Sentry and PostHog behavior is unchanged.
+
+### Phase 8C.3B regression
+
+| Check | Result |
+|---|---|
+| pgTAP | 360 pass |
+| Unit tests | 300 -> **350** pass (50 new) |
+| TypeScript | pass |
+| Lint | 4 warnings, 0 errors (baseline unchanged) |
+| Build | pass, Next.js 16.2.11 unchanged |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+
+### Runtime verification — PENDING
+
+Phase 8C.3B is **not** runtime verified. Still to confirm manually:
+
+- normal lead, session-create and demo traffic unaffected while Upstash is healthy
+- a real limit breach still returns 429 on each surface
+- an induced Upstash outage or timeout returns 503, and no lead row, session row, credit
+  reservation, or demo generation occurs
+- platform grant/revoke succeed normally under the 30/min budget
+- the 31st mutation attempt within a minute returns 429 with no credit or audit mutation
+- grant and revoke visibly share one actor budget
+- production startup with rate-limit configuration absent fails closed rather than allowing traffic
+
+**Phase 8C.3 is not closed.** Slice 8C.3C (security headers and CSP) has not been started.
+
+---
+
+## 18. Future Phase 8C.3C+ (not started)
+
+Remaining Phase 8C.3 work from the preflight audit — security headers and CSP (Report-Only first) —
 remains deferred until explicitly approved, as does the L1 session existence-oracle normalization and
 the framing policy decision tied to the merchant-embedding model.
 

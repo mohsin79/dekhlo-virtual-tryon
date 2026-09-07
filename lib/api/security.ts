@@ -33,6 +33,16 @@ export function genericErrorResponse(message: string, status: number): NextRespo
   return jsonNoStore({ error: message }, { status });
 }
 
+/** An evaluated rate limit was exceeded. */
 export function rateLimitedResponse(): NextResponse {
   return jsonNoStore({ error: "Too many requests. Please try again later." }, { status: 429 });
+}
+
+/**
+ * A dependency the request cannot proceed safely without — currently the rate-limit
+ * provider — could not be consulted. Deliberately generic: no provider name, timeout
+ * detail, credential state, or network diagnostics reaches the client.
+ */
+export function serviceUnavailableResponse(): NextResponse {
+  return jsonNoStore({ error: "Service temporarily unavailable." }, { status: 503 });
 }

@@ -8,6 +8,7 @@ import {
   genericErrorResponse,
   jsonNoStore,
   rateLimitedResponse,
+  serviceUnavailableResponse,
 } from "@/lib/api/security";
 import { getPublicProductBySlugs } from "@/lib/catalog/get-public-product";
 import { getClientIp, limitSessionCreation } from "@/lib/rate-limit";
@@ -64,15 +65,15 @@ export async function POST(request: Request) {
     return genericErrorResponse("Invalid session request.", 400);
   }
 
-  try {
-    const ip = getClientIp(request);
-    const rate = await limitSessionCreation(ip);
+  const rate = await limitSessionCreation(getClientIp(request));
 
-    if (!rate.success) {
-      return rateLimitedResponse();
-    }
-  } catch {
-    return genericErrorResponse("Service temporarily unavailable.", 503);
+  if (rate.outcome === "limited") {
+    return rateLimitedResponse();
+  }
+
+  // Fail closed: no session row is inserted and no credit is reserved without a verdict.
+  if (rate.outcome === "unavailable") {
+    return serviceUnavailableResponse();
   }
 
   const result = await createTryOnSession(parsed.data, {

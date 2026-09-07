@@ -87,6 +87,18 @@ export function getLeadRateLimitHashSecret(): string {
   return resolveLeadRateLimitHashSecret(process.env);
 }
 
+/**
+ * Shared server-only pepper for rate-limit identifiers.
+ *
+ * Phase 8C.3B broadened this secret beyond lead IP hashing to platform credit actor
+ * hashing. The LEAD_RATE_LIMIT_HASH_SECRET variable name is intentionally retained to
+ * avoid renaming a configured production secret; this accessor exists so callers outside
+ * lead capture do not read a lead-named function. Same fail-closed behavior in production.
+ */
+export function getRateLimitHashSecret(): string {
+  return resolveLeadRateLimitHashSecret(process.env);
+}
+
 export function getSentryDsn(): string | undefined {
   return process.env.SENTRY_DSN?.trim() || undefined;
 }
