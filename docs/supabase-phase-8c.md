@@ -1,6 +1,7 @@
 # Phase 8C — Observability and privacy-safe error handling
 
-**Status:** Phases 8C.1, 8C.2 and 8C.3 are all **runtime verified and closed**. Phase 8C.4 has not been started.  
+**Status:** Phases 8C.1, 8C.2 and 8C.3 are all **runtime verified and closed**. Phase 8C.4 is **open**
+— its preflight is done and slice 8C.4A has landed; deployment configuration has not been started.  
 **Branch:** `B2B-saas-implementation`
 
 | Phase | Scope | Status | Commits |
@@ -8,6 +9,7 @@
 | 8C.1 | Server-side Sentry, deep scrubbing, client-safe error sanitization | closed | `7a4b452`, `2e1767e`, `eedee8a` |
 | 8C.2 | Consent-gated PostHog analytics with an outbound event firewall | closed | `53bbaab`, `defef8d`, `c030594`, `1ea433e` |
 | 8C.3 | Request boundaries, fail-closed rate limiting, Report-Only browser security policy | closed | `1fb236b`, `6915320`, `7bd5e30` |
+| 8C.4 | Production readiness. Slice 8C.4A fixed the Supabase readiness probe | **open** | see section 20 |
 
 Phase 8C.3 closure carries two documented coverage boundaries — lead and demo limiter exhaustion is
 covered by automated tests rather than manual runtime checks, and the browser CSP observation covered
@@ -1459,11 +1461,164 @@ dev-only high advisories in ESLint tooling (`brace-expansion` under `minimatch@3
 which are excluded from the production dependency tree and tracked rather than force-upgraded. A full
 `npm audit` is **not** clean and is not claimed to be.
 
-**Phase 8C.3 is closed.** Phase 8C.4 has not been started.
+**Phase 8C.3 is closed.**
 
 ---
 
-## 20. Future Phase 8C.4+ (not started)
+## 20. Phase 8C.4A — Supabase readiness probe correctness
+
+Phase 8C.4 is **open**. Its preflight audit found one production blocker, and this slice fixes only
+that blocker. Deployment configuration and the remaining preflight findings are untouched.
+
+### The blocker — `getSession()` was not a connectivity probe
+
+`verifySupabaseConnection()` proved connectivity with `supabase.auth.getSession()`. The admin client
+is constructed with `persistSession: false` and never holds a stored session, so `getSession()`
+resolves entirely from local state and issues **no network request at all**. It returned
+`error: null` against a refused connection and against a nonexistent domain, in 0 ms.
+
+`/api/health/supabase` therefore reported `200 {"status":"ok"}` while Supabase was completely
+unreachable, making it unsafe as a deployment readiness check, an uptime dependency check and an
+operator diagnostic — the three things it exists for.
+
+### The probe now performs real database I/O
+
+The probe issues a single bounded `SELECT` through the existing server-only admin client:
+
+```
+brands -> select("id") -> limit(1) -> abortSignal(AbortSignal.timeout(5000))
+```
+
+The old check built its own client from the **publishable (anon)** key; the probe now goes through
+the existing server-only admin client, so the query is not subject to RLS and a reachable database
+cannot be misreported as unhealthy because a policy filtered the row.
+
+`public.brands` was chosen after inspecting the migrations. It is created by the first Phase 2 tenant
+migration (`20260722140000_phase2_tenant_schema.sql`), is never dropped by any later migration, and
+is the foundational tenant table, so it is guaranteed to exist in every environment. Only the opaque
+`id` column of at most one row is requested and the row is discarded; the probe returns a boolean.
+
+A `head: true` variant was implemented first and rejected on evidence. PostgREST answers HTTP HEAD
+with an empty body, which postgrest-js surfaces as an empty-message error once Next's patched fetch
+is in play, so a fully reachable database was reported unhealthy. The single-row `SELECT` is the
+option the task description lists first and it behaves correctly under both plain Node and Next.
+
+The probe performs no mutation, no RPC, no credit operation and no lead operation, and this is
+asserted by test rather than left to review.
+
+### Semantics
+
+| Condition | Result |
+|---|---|
+| Successful query returning rows | healthy |
+| **Successful query returning zero rows** | **healthy** |
+| Provider/PostgREST error (bad key, bad relation) | unhealthy |
+| Connection refused | unhealthy |
+| DNS failure | unhealthy |
+| Invalid or malformed Supabase URL | unhealthy |
+| Timeout | unhealthy |
+| Admin client cannot be constructed (missing secret) | unhealthy |
+
+An empty table is healthy by design: the probe proves reachability, not the presence of data. The
+local `brands` table is empty after `db reset` and still reports healthy, which is the direct
+evidence for that row.
+
+### Timeout and hang safety
+
+No new timeout framework was introduced. postgrest-js 2.110.8 already supports
+`.abortSignal()`, and the probe passes the native `AbortSignal.timeout(5000)` — the smallest
+established mechanism available.
+
+The signal is load-bearing rather than decorative: postgrest-js retries idempotent requests on
+network errors with exponential backoff (1s, 2s, 4s, up to 3 attempts), so the retry budget alone
+would let a provider outage run past 7s. Measured against unreachable origins, total probe time
+tracked the supplied timeout exactly. This is unrelated to the Upstash 2000 ms rate-limit timeout.
+
+### Endpoint contract — unchanged
+
+The route already had the correct shape, so `app/api/health/supabase/route.ts` was **not modified**.
+Recorded for the audit trail:
+
+| Case | Status | Body |
+|---|---|---|
+| Healthy | `200` | `{"status":"ok"}` |
+| Supabase unavailable | `503` | `{"status":"error"}` |
+| Unauthorized / health access disabled | `404` | `{"status":"error"}` |
+
+`503` was already used for dependency failure, which is the correct readiness semantic, so no status
+change was needed. `Cache-Control: no-store` is preserved on every path. The body is a single
+`status` field: no exception message, Supabase error object, hostname, table name, URL, credential or
+stack trace reaches the caller. Failure reasons are discarded inside the probe rather than filtered
+at the edge.
+
+`INTERNAL_HEALTH_SECRET` behaviour is untouched — development still allows access, and otherwise a
+missing secret or a mismatched `x-internal-health-secret` header both yield `404`. The service-role
+key remains server-only; no `NEXT_PUBLIC_` access to server secrets was introduced.
+
+The admin client is imported dynamically inside `verifySupabaseConnection()` so that
+`lib/supabase/health.ts` carries no static `server-only` dependency and the probe logic stays
+directly unit-testable.
+
+### Runtime verification
+
+Measured against the real local Supabase and against real failing origins:
+
+| Case | Result |
+|---|---|
+| Reachable local Supabase, `brands` empty (0 rows) | **healthy**, 41 ms |
+| Connection refused (`127.0.0.1:1`) | unhealthy, bounded at the 1500 ms timeout |
+| DNS failure | unhealthy, bounded at the 1500 ms timeout |
+| Reachable host, invalid credential | unhealthy, 15 ms |
+| **Old `getSession()` probe, unreachable origin** | **no error — would have reported healthy, 0 ms** |
+
+The last row is the false positive reproduced side by side with the fix, which is the clearest
+statement of what changed.
+
+The live endpoint returned `503 {"status":"error"}` with `Cache-Control: no-store` under
+`next start`, and `404` for a missing and for a mismatched health secret. A live `200` from the
+running server was **not** captured: the `SUPABASE_SECRET_KEY` in the developer's `.env.local` is
+stale relative to the running local stack and is rejected with HTTP 401, and that file was left
+untouched as instructed. Notably the old probe would have reported that same server healthy despite
+it being unable to authenticate to Supabase at all, so the observed `503` is correct behaviour and is
+itself evidence the fix works. The healthy path is covered by the measured probe result above and by
+unit tests.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `lib/supabase/health.ts` | replaced the `getSession()` check with a bounded single-row `SELECT` through the admin client |
+| `tests/unit/phase8c4a-health-probe.test.ts` | new — 19 tests covering probe outcomes, request shape, the false-positive regression and the endpoint contract |
+| `app/api/health/supabase/route.ts` | unchanged — already `200`/`503`/`404` with `no-store` |
+
+### No database or dependency changes
+
+No migration, schema, RLS, RPC, storage, retention or dependency change. No Sentry, PostHog, Inngest,
+rate-limit, credit, lead or auth change. pgTAP stayed at 360 passing tests, which is the standing
+evidence that database-level authorization boundaries did not move.
+
+### Phase 8C.4A regression
+
+| Check | Result |
+|---|---|
+| pgTAP | **360 pass** (Files=20, Result: PASS) |
+| Unit tests | **399 pass**, 0 fail (380 -> 399, +19) |
+| TypeScript | pass |
+| Lint | 4 warnings, 0 errors (acknowledged baseline) |
+| Build | pass |
+| Next.js | 16.2.11 unchanged |
+| `npm audit --omit=dev` | **0 vulnerabilities** |
+
+### Phase 8C.4 remains OPEN
+
+This slice fixed the readiness probe only. Deployment configuration, the production environment
+matrix, the live production-mode header and CSP checks, and the remaining preflight findings
+(M1/M2/M3 and L1-L5) are **not** started. Phase 8C.4 runtime and deployment verification is still
+pending and Phase 8C.4 is **not closed**.
+
+---
+
+## 21. Future Phase 8C.4+ (remaining)
 
 CSP enforcement (and the nonce work required to drop `script-src 'unsafe-inline'`), CSP observation of
 the authenticated dashboard and platform surfaces, manual lead and demo limiter runtime verification,
@@ -1472,4 +1627,5 @@ merchant-embedding model, and the COOP/CORP/COEP evaluation remain deferred unti
 
 Further observability work (additional analytics events, merchant identity policy, browser Sentry review) remains deferred until explicitly approved.
 
-Phase 8C.1 and Phase 8C.2 are both runtime verified and closed.
+Phases 8C.1, 8C.2 and 8C.3 are runtime verified and closed. Phase 8C.4 is open: slice 8C.4A has
+landed and deployment configuration has not been started.
