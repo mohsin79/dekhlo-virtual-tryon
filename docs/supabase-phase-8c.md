@@ -1,9 +1,18 @@
 # Phase 8C — Observability and privacy-safe error handling
 
-**Status:** Phase 8C.1 **runtime verified and closed** (server-side Sentry only)  
-**Branch:** `B2B-saas-implementation`  
-**Implementation commits:** `7a4b452` (feat), `2e1767e` (privacy hardening)  
-**Scope:** Server-side error observability, deep scrubbing, and client-safe error sanitization. PostHog, browser Sentry, and analytics consent are deferred to Phase 8C.2+.
+**Status:** Phases 8C.1, 8C.2 and 8C.3 are all **runtime verified and closed**. Phase 8C.4 has not been started.  
+**Branch:** `B2B-saas-implementation`
+
+| Phase | Scope | Status | Commits |
+|---|---|---|---|
+| 8C.1 | Server-side Sentry, deep scrubbing, client-safe error sanitization | closed | `7a4b452`, `2e1767e`, `eedee8a` |
+| 8C.2 | Consent-gated PostHog analytics with an outbound event firewall | closed | `53bbaab`, `defef8d`, `c030594`, `1ea433e` |
+| 8C.3 | Request boundaries, fail-closed rate limiting, Report-Only browser security policy | closed | `1fb236b`, `6915320`, `7bd5e30` |
+
+Phase 8C.3 closure carries two documented coverage boundaries — lead and demo limiter exhaustion is
+covered by automated tests rather than manual runtime checks, and the browser CSP observation covered
+public surfaces only. Both are detailed in section 19. CSP remains **Report-Only**; enforcement,
+framing policy and COOP/CORP/COEP are deferred.
 
 ---
 
@@ -756,7 +765,8 @@ Phase 8C.3 is split into slices. **8C.3A is this slice only**: four isolated gua
 Phase 8C.3 preflight audit (H3, M2, M5, L2). Rate-limit fail-closed policy and security headers are
 deliberately **not** part of this slice.
 
-Phase 8C.3 as a whole is **not closed**. Runtime verification for 8C.3A is **pending**.
+Phase 8C.3 is **runtime verified and closed** — see section 19. Runtime verification for 8C.3A is
+recorded in section 19.1.
 
 ### Scope
 
@@ -907,19 +917,9 @@ retention rules, and lead business behavior are untouched. Sentry and PostHog be
 | Build | pass, Next.js 16.2.11 unchanged |
 | `npm audit --omit=dev` | 0 vulnerabilities |
 
-### Runtime verification — PENDING
+### Runtime verification — PASSED
 
-Phase 8C.3A is **not** runtime verified. The following still require manual runtime checks:
-
-- oversized session-create JSON returns `400` without parsing
-- ordinary try-on session creation, upload validation, generation and polling remain unaffected
-- oversized demo multipart returns `413`
-- a normal two-image demo submission still succeeds
-- malformed session ids return `404` on all three routes
-- session restoration and polling behave unchanged
-
-**Phase 8C.3 is not closed.** Slices 8C.3B (rate-limit fail-closed policy) and 8C.3C (security
-headers and CSP) have not been started.
+Phase 8C.3A is runtime verified; the observations are recorded in section 19.1.
 
 ---
 
@@ -929,7 +929,8 @@ Second Phase 8C.3 slice. Addresses preflight findings **H1** (Upstash timeout fa
 (lead limiter failures surfaced as 500) and **M1** (platform credit mutations had no application
 limiter). Security headers and CSP remain out of scope.
 
-Phase 8C.3 as a whole is **not closed**. Runtime verification for 8C.3B is **pending**.
+Phase 8C.3 is **runtime verified and closed** — see section 19. Runtime verification for 8C.3B is
+recorded in section 19.2.
 
 ### The fail-open defect
 
@@ -1124,20 +1125,10 @@ untouched. Sentry and PostHog behavior is unchanged.
 | Build | pass, Next.js 16.2.11 unchanged |
 | `npm audit --omit=dev` | 0 vulnerabilities |
 
-### Runtime verification — PENDING
+### Runtime verification — PASSED (with a documented coverage boundary)
 
-Phase 8C.3B is **not** runtime verified. Still to confirm manually:
-
-- normal lead, session-create and demo traffic unaffected while Upstash is healthy
-- a real limit breach still returns 429 on each surface
-- an induced Upstash outage or timeout returns 503, and no lead row, session row, credit
-  reservation, or demo generation occurs
-- platform grant/revoke succeed normally under the 30/min budget
-- the 31st mutation attempt within a minute returns 429 with no credit or audit mutation
-- grant and revoke visibly share one actor budget
-- production startup with rate-limit configuration absent fails closed rather than allowing traffic
-
-**Phase 8C.3 is not closed.** Slice 8C.3C (security headers and CSP) has not been started.
+Phase 8C.3B is runtime verified; the observations, and the limits of what was manually exercised,
+are recorded in section 19.2.
 
 ---
 
@@ -1146,7 +1137,8 @@ Phase 8C.3B is **not** runtime verified. Still to confirm manually:
 Third Phase 8C.3 slice. Addresses the preflight security-header finding. **No CSP is enforced**: the
 purpose of this slice is to observe real application requirements before enforcement.
 
-Phase 8C.3 as a whole is **not closed**. Runtime verification for 8C.3C is **pending**.
+Phase 8C.3 is **runtime verified and closed** — see section 19. Runtime verification for 8C.3C is
+recorded in section 19.3.
 
 ### Where headers are configured
 
@@ -1289,46 +1281,194 @@ Sentry or PostHog behavior changed. No migration.
 | Build | pass, Next.js 16.2.11 unchanged |
 | `npm audit --omit=dev` | 0 vulnerabilities |
 
-### Manual CSP verification checklist — PENDING
+### Manual CSP verification — PARTIALLY COMPLETED
 
-Load each surface with the DevTools console open, record every CSP violation, and confirm the page
-still works (Report-Only must never block). Also confirm the response headers on each navigation.
-
-| Surface | Check |
-|---|---|
-| Homepage `/` | Renders, fonts and styles load, no unexpected violation |
-| Auth `/auth` login and signup | Forms submit (`form-action 'self'`), Supabase auth request succeeds |
-| Merchant try-on `/try/<brand>/<product>` | Product image loads from the Supabase origin |
-| Upload preview | `blob:` preview renders after selecting a person photo |
-| Completed result | Generated result image renders (signed Supabase URL, and `data:` on the demo flow) |
-| Lead form | Renders and submits successfully |
-| Dashboard `/dashboard` | Loads, styles intact, Supabase session refresh succeeds |
-| Dashboard leads `/dashboard/leads` | Leads load and render |
-| Platform admin | Loads; credit grant/revoke submit successfully |
-| PostHog ingestion | With consent accepted, `connect-src` permits `us.i.posthog.com`; no violation and no remote script load attempt |
-| Supabase image/storage | Product images and signed result URLs load with no `img-src` violation |
-
-Also confirm at the header level:
-
-- `Strict-Transport-Security` present in a production deployment and **absent** on localhost
-- `Content-Security-Policy-Report-Only` present and enforcing `Content-Security-Policy` absent
-- no `X-Frame-Options`, no `frame-ancestors`, no COOP/CORP/COEP
-- `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` present on both page and API
-  responses
-
-Enforcement is a later decision: only after the observation window shows a clean or well-understood
-violation set should `Content-Security-Policy` be considered, most likely alongside nonce-based
-script tagging to drop `'unsafe-inline'`.
-
-**Phase 8C.3 is not closed.**
+Runtime results, including which surfaces were and were not observed, are recorded in section 19.3.
 
 ---
 
-## 19. Future Phase 8C.4+ (not started)
+## 19. Phase 8C.3 — RUNTIME VERIFIED AND CLOSED
 
-CSP enforcement, the L1 session existence-oracle normalization, the framing policy decision tied to
-the merchant-embedding model, and the COOP/CORP/COEP evaluation remain deferred until explicitly
-approved.
+Phase 8C.3 is **runtime verified and closed**.
+
+| Slice | Commit | Subject |
+|---|---|---|
+| 8C.3A | `1fb236b` | fix: harden try-on request boundaries |
+| 8C.3B | `6915320` | fix: fail closed on rate-limit infrastructure |
+| 8C.3C | `7bd5e30` | feat: add report-only browser security policy |
+
+Closure is recorded with two explicit coverage boundaries, both documented below rather than glossed
+over: lead and demo limiter exhaustion were verified by automated tests only (19.2), and the browser
+CSP observation pass covered public surfaces only (19.3).
+
+### 19.1 Phase 8C.3A runtime verification — PASSED
+
+Operator-confirmed observations:
+
+- Oversized `POST /api/try-on/sessions` JSON was rejected with **400 before JSON parsing**.
+- The oversized request produced **no session and no credit side effect**.
+- A malformed session UUID returned a **generic 404** on all three routes:
+  - `GET /api/try-on/sessions/[sessionId]`
+  - `POST /api/try-on/sessions/[sessionId]/generate`
+  - `POST /api/try-on/sessions/[sessionId]/validate-upload`
+- **No PostgreSQL UUID error was exposed** — malformed input is indistinguishable from a session that
+  does not exist, so the routes remain enumeration-resistant.
+- Oversized demo multipart was rejected with **413 before `formData()` and before OpenAI generation**.
+- Existing completed-session restoration **still works**.
+- Restoration produced **no second generation and no second reservation**.
+
+### 19.2 Phase 8C.3B runtime verification — PASSED
+
+Operator-confirmed observations:
+
+- An intentionally unavailable Upstash produced **503**.
+- The error response was **generic**, exposing no Upstash, Redis, timeout, credential or network
+  detail.
+- The unavailable limiter created **no try-on session**.
+- The unavailable limiter produced **no credit side effect**.
+- Platform limiter infrastructure failure produced **503 before validation and before the RPC**.
+- Actual platform rate-limit exhaustion produced **429**.
+- Invalid platform requests below the limit remained **ordinary validation failures**, so the limiter
+  did not mask or replace normal validation behavior.
+- **No credit RPC, ledger mutation or audit mutation** occurred from the invalid 429 test requests.
+- **429 and 503 are therefore runtime-distinct**: an evaluated limit breach and an unevaluable limiter
+  produce different, correct responses rather than a single conflated failure.
+
+#### Coverage boundary — lead and demo limiters
+
+Lead and demo limiter exhaustion and their fail-closed 503 paths were **not** manually exercised at
+runtime. They remain covered by the Phase 8C.3B automated suite
+(`tests/unit/phase8c3b-rate-limit-failclosed.test.ts`), which proves:
+
+- the shared classifier maps `success: true` + `reason: "timeout"` to `unavailable`, pinned against
+  the installed `@upstash/ratelimit` payload
+- malformed and thrown provider results become `unavailable`
+- lead capture answers `limited` with 429 and `unavailable` with 503, and the fail-closed return
+  precedes `create_try_on_lead`
+- demo answers `limited` with 429 and `unavailable` with 503 on both limiter blocks, and generation
+  follows every verdict
+
+This is **automated coverage, not a manual runtime observation**, and is recorded as such. Manual
+lead and demo limiter verification remains available as a future check.
+
+### 19.3 Phase 8C.3C runtime verification — PASSED (public surfaces)
+
+#### Live response headers — confirmed present
+
+Read from real responses on both a production server and the development server, on page and API
+routes:
+
+| Header | Value | Scope |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | confirmed |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | confirmed |
+| `Permissions-Policy` | `camera=(self), geolocation=(), microphone=()` | confirmed |
+| `Content-Security-Policy-Report-Only` | present | confirmed |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | **production only**, confirmed absent in development |
+
+The production policy was confirmed to contain **no** `'unsafe-eval'` and no `ws://` source; the
+development policy was confirmed to contain both, so development tooling did not weaken production.
+
+#### Confirmed absent
+
+- enforcing `Content-Security-Policy`
+- `X-Frame-Options`
+- `frame-ancestors`
+- `Cross-Origin-Opener-Policy`
+- `Cross-Origin-Resource-Policy`
+- `Cross-Origin-Embedder-Policy`
+
+#### Browser CSP observation result
+
+The observation pass was **completely clean**: **no CSP violations of any kind** were reported on the
+surfaces tested — no first-party production-relevant violations, and no development-only or
+browser-extension violations either.
+
+**Surfaces observed (public only):**
+
+- homepage `/`
+- auth (login and signup)
+- merchant try-on
+- upload preview
+- completed result
+- lead form
+
+Supabase image loading was exercised through the merchant try-on and completed-result surfaces.
+
+**Surfaces NOT observed in this pass:**
+
+- dashboard `/dashboard`
+- dashboard leads `/dashboard/leads`
+- platform admin
+- a dedicated PostHog-ingestion confirmation with consent accepted
+
+These remain unobserved and should be checked before any future enforcement decision. A clean public
+pass does not demonstrate that authenticated surfaces are violation-free.
+
+#### CSP remains Report-Only
+
+**A clean observation pass does not make CSP ready for enforcement**, and no enforcement is implied
+by this closure. Reasons enforcement remains deferred:
+
+- The observation covered public surfaces only; authenticated dashboard and platform surfaces are
+  unobserved.
+- The policy still relies on `script-src 'unsafe-inline'`, which materially weakens the main
+  protection CSP offers. Dropping it requires nonce-tagging App Router bootstrap payloads via
+  middleware — an implementation change, not an observation.
+- A single clean pass is not an observation window; enforcement should follow sustained observation
+  across real traffic.
+
+Merchant embedding and framing policy remain **deferred**: no `X-Frame-Options` and no
+`frame-ancestors` are set, and the framing decision is designed together with the merchant embedding
+model. COOP, CORP and COEP remain deferred for the same reason.
+
+### 19.4 Security invariants — reconfirmed unchanged
+
+Phase 8C.3 changed request guards, rate-limit failure semantics and response headers only. Across all
+three slices there were **no** changes to:
+
+| Area | Status |
+|---|---|
+| RLS policies | unchanged |
+| Schema, migrations, RPCs | unchanged — no migration was created in any 8C.3 slice |
+| Service-role boundary | unchanged; credentials remain server-only |
+| Credit semantics | unchanged — reserve/consume/release invariants and RPC arguments untouched |
+| Lead semantics | unchanged — schema, business rules and `create_try_on_lead` untouched |
+| Image and storage retention | unchanged — Phase 7 cleanup rules intact |
+| OpenAI and Inngest architecture | unchanged — prompt, model, retries, event names and signing untouched |
+| Sentry | unchanged — no new capture sites; 429s are not reported and 503 limiter paths are deliberately not captured |
+| PostHog | unchanged — no new events, properties or configuration |
+
+pgTAP remained at 360 passing tests throughout all three slices, which is the standing evidence that
+RLS and database-level authorization boundaries did not move.
+
+### 19.5 Final Phase 8C.3 regression
+
+| Check | Result |
+|---|---|
+| pgTAP | **360 pass** (Files=20, Result: PASS) |
+| Unit tests | **380 pass**, 0 fail (300 at 8C.3 start -> 350 after 8C.3B -> 380 after 8C.3C) |
+| TypeScript | pass |
+| Lint | 4 warnings, 0 errors (acknowledged baseline) |
+| Build | pass |
+| Next.js | 16.2.11 unchanged |
+| `npm audit --omit=dev` | **0 vulnerabilities** |
+
+Dependencies were not modified in this closure. The full `npm audit` still reports the two documented
+dev-only high advisories in ESLint tooling (`brace-expansion` under `minimatch@3.x`, and `js-yaml`),
+which are excluded from the production dependency tree and tracked rather than force-upgraded. A full
+`npm audit` is **not** clean and is not claimed to be.
+
+**Phase 8C.3 is closed.** Phase 8C.4 has not been started.
+
+---
+
+## 20. Future Phase 8C.4+ (not started)
+
+CSP enforcement (and the nonce work required to drop `script-src 'unsafe-inline'`), CSP observation of
+the authenticated dashboard and platform surfaces, manual lead and demo limiter runtime verification,
+the L1 session existence-oracle normalization, the framing policy decision tied to the
+merchant-embedding model, and the COOP/CORP/COEP evaluation remain deferred until explicitly approved.
 
 Further observability work (additional analytics events, merchant identity policy, browser Sentry review) remains deferred until explicitly approved.
 
