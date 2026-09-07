@@ -1,10 +1,13 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import type { AnalyticsConsentState } from "@/lib/analytics/consent";
+import type { AnalyticsConsentState, AnalyticsConsentStatus } from "@/lib/analytics/consent";
 
 export type AnalyticsConsentContextValue = {
-  consent: AnalyticsConsentState;
+  /** Includes the "resolving" hydration status. */
+  status: AnalyticsConsentStatus;
+  /** Resolved consent state, or null while the stored preference is still being read. */
+  consent: AnalyticsConsentState | null;
   acceptConsent: () => void;
   declineConsent: () => void;
   resetConsent: () => void;

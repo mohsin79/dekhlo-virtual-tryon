@@ -6,11 +6,42 @@ export type AnalyticsConsentState = "undecided" | "accepted" | "declined";
 
 export type AnalyticsConsentDecision = "accepted" | "declined";
 
+/**
+ * "resolving" is a hydration status, not a consent choice. The stored preference cannot be read
+ * during a server or prerendered render, so consent is unknown until the client resolves the
+ * cookie. "resolving" must never be treated as "undecided".
+ */
+export type AnalyticsConsentStatus = "resolving" | AnalyticsConsentState;
+
 export type AnalyticsConsentRecord = {
   v: number;
   state: AnalyticsConsentDecision;
   at: string;
 };
+
+export type AnalyticsConsentLifecycleAction = "none" | "initialize" | "shutdown";
+
+function decodeCookieValue(raw: string): string {
+  const trimmed = raw.trim();
+
+  if (!trimmed.includes("%")) {
+    return trimmed;
+  }
+
+  try {
+    return decodeURIComponent(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function stripCookieQuotes(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1);
+  }
+
+  return value;
+}
 
 export function parseAnalyticsConsentCookie(
   raw: string | null | undefined,
@@ -19,9 +50,10 @@ export function parseAnalyticsConsentCookie(
     return "undecided";
   }
 
+  const candidate = stripCookieQuotes(decodeCookieValue(raw));
+
   try {
-    const decoded = decodeURIComponent(raw.trim());
-    const parsed = JSON.parse(decoded) as Partial<AnalyticsConsentRecord>;
+    const parsed = JSON.parse(candidate) as Partial<AnalyticsConsentRecord>;
 
     if (parsed.v !== ANALYTICS_CONSENT_VERSION) {
       return "undecided";
@@ -35,6 +67,42 @@ export function parseAnalyticsConsentCookie(
   } catch {
     return "undecided";
   }
+}
+
+/** The main consent prompt appears only when no valid stored preference exists. */
+export function shouldShowMainConsentBanner(status: AnalyticsConsentStatus): boolean {
+  return status === "undecided";
+}
+
+export function isAnalyticsConsentResolved(status: AnalyticsConsentStatus): boolean {
+  return status !== "resolving";
+}
+
+export function describeAnalyticsPreference(status: AnalyticsConsentStatus): string {
+  if (status === "accepted") {
+    return "Analytics accepted";
+  }
+
+  if (status === "declined") {
+    return "Analytics declined";
+  }
+
+  return "No analytics preference saved";
+}
+
+export function resolveConsentLifecycleAction(
+  status: AnalyticsConsentStatus,
+  isConfigured: boolean,
+): AnalyticsConsentLifecycleAction {
+  if (status === "resolving") {
+    return "none";
+  }
+
+  if (status === "accepted" && isConfigured) {
+    return "initialize";
+  }
+
+  return "shutdown";
 }
 
 export function serializeAnalyticsConsentRecord(state: AnalyticsConsentDecision): string {

@@ -1,11 +1,12 @@
 "use client";
 
 import { useAnalyticsConsent } from "@/components/analytics/analytics-consent-context";
+import { shouldShowMainConsentBanner } from "@/lib/analytics/consent";
 
 export function AnalyticsConsentBanner() {
-  const { consent, acceptConsent, declineConsent } = useAnalyticsConsent();
+  const { status, acceptConsent, declineConsent } = useAnalyticsConsent();
 
-  if (consent !== "undecided") {
+  if (!shouldShowMainConsentBanner(status)) {
     return null;
   }
 
