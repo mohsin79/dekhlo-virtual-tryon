@@ -223,3 +223,84 @@ Added **`@sentry/nextjs@10.71.0`** for server-side error observability only (no 
 Install method: `npm install @sentry/nextjs@10.71.0 --legacy-peer-deps` (same OpenAI/Zod peer resolution as existing deps).
 
 No production dependency advisories introduced. Sentry adds build-time tooling via `@sentry/webpack-plugin` (dev/build only); source-map upload is disabled when `SENTRY_AUTH_TOKEN` is absent.
+
+---
+
+## `browserslist` advisories (2026-09-07)
+
+Two advisories were published against `browserslist` after the Phase 8C.1/8C.2 installs, which
+turned `npm audit --omit=dev` non-zero without any dependency change on our side.
+
+| Advisory | Summary |
+|----------|---------|
+| [GHSA-c83g-rgw3-j3cx](https://github.com/advisories/GHSA-c83g-rgw3-j3cx) | Unbounded memory growth (no cache eviction) via distinct query results, leading to eventual OOM |
+| [GHSA-73wf-gq98-2v4g](https://github.com/advisories/GHSA-73wf-gq98-2v4g) | Uncaught crash / prototype write via untrusted `browserslist-stats.json` custom stats (`normalizeStats`) |
+
+Affected: `<= 4.28.6` — Patched: `>= 4.28.7`
+
+### Production dependency path
+
+```text
+@sentry/nextjs@10.71.0
+└─ @sentry/bundler-plugin-core@5.3.0
+   └─ @babel/core@7.29.7
+      └─ @babel/helper-compilation-targets@7.29.7
+         └─ browserslist@4.28.6
+            └─ update-browserslist-db@1.2.3
+               └─ browserslist (deduped)
+```
+
+It also appears in the dev tree under `autoprefixer@10.5.4`. Both resolve to the same hoisted
+`node_modules/browserslist`. This is build-time tooling and is not reachable at application
+runtime, but `npm audit --omit=dev` counts it because `@sentry/nextjs` is a production dependency.
+
+### Remediation
+
+| | Version |
+|---|---|
+| Before | `browserslist@4.28.6` |
+| After | `browserslist@4.28.9` |
+
+**No override was required.** Every parent range already accepted the patched release:
+
+- `browserslist@^4.28.6` from `autoprefixer@10.5.4`
+- `browserslist@^4.24.0` from `@babel/helper-compilation-targets@7.29.7`
+- peer `browserslist@>= 4.21.0` from `update-browserslist-db`
+
+Applied with normal dependency resolution, lockfile only:
+
+```text
+npm update browserslist --package-lock-only --legacy-peer-deps
+npm ci --legacy-peer-deps
+```
+
+`package.json` was **not** modified — no direct dependency, no `overrides` entry. Only
+`package-lock.json` changed, and the diff is confined to the `browserslist` subtree:
+`browserslist` 4.28.6 → 4.28.9, `update-browserslist-db` 1.2.3 → 1.3.2, plus its data packages
+`baseline-browser-mapping`, `caniuse-lite`, `electron-to-chromium`, and `node-releases`.
+
+Resolution stayed inside the `4.28.x` line. `4.28.9` (not `4.28.8`) is what the existing ranges
+naturally resolve to, since it is now the current `4.28.x` patch release; both are above the
+`>= 4.28.7` patched threshold. Next.js and Sentry versions were unchanged, and `npm audit fix`
+was not run.
+
+### Verification (2026-09-07)
+
+```text
+npm ls browserslist --omit=dev        # browserslist@4.28.9 (no 4.28.6 anywhere)
+npm audit --omit=dev                  # found 0 vulnerabilities
+npm run test:unit                     # 272 pass
+npx tsc --noEmit                      # pass
+npm run lint                          # pass (4 existing warnings, 0 errors)
+npm run build                         # pass (Next.js 16.2.11)
+npx supabase db reset --local
+npx supabase test db --local          # 360 pass, 20 files
+```
+
+### Outstanding (dev-only, not remediated here)
+
+Two further advisories are newly published against the **dev** tree only and do not affect the
+production audit. They are tracked separately and were deliberately left out of this change:
+
+- `brace-expansion` `<= 1.1.17` (dev, under ESLint → `minimatch@3.x`) — GHSA-mh99-v99m-4gvg, GHSA-rgw5-rvv9-x895
+- `js-yaml` `4.0.0 - 4.3.0` (dev) — GHSA-5p4m-2wfm-xmqj
