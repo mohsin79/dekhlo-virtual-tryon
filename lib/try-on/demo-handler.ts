@@ -1,12 +1,14 @@
 import "server-only";
 
 import { cookies } from "next/headers";
+import { exceedsContentLengthLimit } from "@/lib/api/body-limits";
 import {
   assertSameOrigin,
   genericErrorResponse,
   jsonNoStore,
   rateLimitedResponse,
 } from "@/lib/api/security";
+import { DEMO_MAX_MULTIPART_BODY_BYTES } from "@/lib/try-on/demo-constants";
 import { validatePersonPhotoBuffer } from "@/lib/try-on/sessions/person-validation";
 import { bufferToDataUrl, generateTryOnImage, TRY_ON_SERVICE_UNAVAILABLE_MESSAGE } from "@/lib/try-on/generate";
 import {
@@ -80,6 +82,15 @@ export async function handleDemoTryOn(request: Request) {
 
   if (!process.env.OPENAI_API_KEY) {
     return genericErrorResponse(TRY_ON_SERVICE_UNAVAILABLE_MESSAGE, 503);
+  }
+
+  if (
+    exceedsContentLengthLimit(
+      request.headers.get("content-length"),
+      DEMO_MAX_MULTIPART_BODY_BYTES,
+    )
+  ) {
+    return genericErrorResponse("Request body is too large.", 413);
   }
 
   let form: FormData;

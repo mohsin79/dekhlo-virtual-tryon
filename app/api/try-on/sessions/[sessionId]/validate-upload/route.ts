@@ -13,6 +13,10 @@ import {
   toPublicSessionStatus,
 } from "@/lib/try-on/sessions/service";
 import { downloadPersonPhoto, removePersonPhoto } from "@/lib/try-on/sessions/storage";
+import {
+  isValidTryOnSessionId,
+  TRY_ON_SESSION_NOT_FOUND_MESSAGE,
+} from "@/lib/try-on/sessions/session-id";
 import { validatePersonPhotoBuffer } from "@/lib/try-on/sessions/person-validation";
 import { mimeTypeToExtension } from "@/lib/try-on/sessions/constants";
 import { buildPersonStoragePath } from "@/lib/try-on/sessions/paths";
@@ -29,6 +33,11 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   const { sessionId } = await context.params;
+
+  if (!isValidTryOnSessionId(sessionId)) {
+    return genericErrorResponse(TRY_ON_SESSION_NOT_FOUND_MESSAGE, 404);
+  }
+
   const auth = await authorizeSessionAccess(sessionId);
 
   if (!auth.ok) {

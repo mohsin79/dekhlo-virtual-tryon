@@ -3,6 +3,10 @@ import "server-only";
 import { jsonNoStore, genericErrorResponse } from "@/lib/api/security";
 import { getPublicProductBySlugs } from "@/lib/catalog/get-public-product";
 import { authorizeSessionAccess } from "@/lib/try-on/sessions/auth";
+import {
+  isValidTryOnSessionId,
+  TRY_ON_SESSION_NOT_FOUND_MESSAGE,
+} from "@/lib/try-on/sessions/session-id";
 import { sessionMatchesProductScope } from "@/lib/try-on/sessions/session-product-scope";
 import { createResultReadUrl } from "@/lib/try-on/sessions/storage";
 import { toPublicSessionStatus } from "@/lib/try-on/sessions/service";
@@ -13,6 +17,11 @@ type RouteContext = {
 
 export async function GET(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
+
+  if (!isValidTryOnSessionId(sessionId)) {
+    return genericErrorResponse(TRY_ON_SESSION_NOT_FOUND_MESSAGE, 404);
+  }
+
   const auth = await authorizeSessionAccess(sessionId);
 
   if (!auth.ok) {

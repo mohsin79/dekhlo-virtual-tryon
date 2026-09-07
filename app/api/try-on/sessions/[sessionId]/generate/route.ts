@@ -7,6 +7,10 @@ import {
 } from "@/lib/api/security";
 import { dispatchTryOnGeneration } from "@/lib/try-on/sessions/dispatch-generation";
 import { authorizeSessionAccess } from "@/lib/try-on/sessions/auth";
+import {
+  isValidTryOnSessionId,
+  TRY_ON_SESSION_NOT_FOUND_MESSAGE,
+} from "@/lib/try-on/sessions/session-id";
 import { toPublicSessionStatus } from "@/lib/try-on/sessions/service";
 
 type RouteContext = {
@@ -19,6 +23,11 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { sessionId } = await context.params;
+
+  if (!isValidTryOnSessionId(sessionId)) {
+    return genericErrorResponse(TRY_ON_SESSION_NOT_FOUND_MESSAGE, 404);
+  }
+
   const auth = await authorizeSessionAccess(sessionId);
 
   if (!auth.ok) {

@@ -7,6 +7,12 @@ export const PERSON_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 export const TRY_ON_RESULT_MAX_BYTES = 10 * 1024 * 1024;
 export const MAX_IMAGE_DIMENSION = 4096;
 
+/**
+ * Session-create accepts four short JSON fields. Unrelated to shopper image upload
+ * size, which is bounded separately by PERSON_PHOTO_MAX_BYTES.
+ */
+export const TRY_ON_MAX_JSON_BODY_BYTES = 4096;
+
 export const SIGNED_URL_TTL_SECONDS = 15 * 60;
 
 export const INCOMPLETE_SESSION_TTL_HOURS = 24;

@@ -750,7 +750,185 @@ legal compliance.
 
 ---
 
-## 16. Future Phase 8C.3+ (not started)
+## 16. Phase 8C.3A — isolated request and production-safety guards
+
+Phase 8C.3 is split into slices. **8C.3A is this slice only**: four isolated guards drawn from the
+Phase 8C.3 preflight audit (H3, M2, M5, L2). Rate-limit fail-closed policy and security headers are
+deliberately **not** part of this slice.
+
+Phase 8C.3 as a whole is **not closed**. Runtime verification for 8C.3A is **pending**.
+
+### Scope
+
+| Finding | Change |
+|---|---|
+| H3 | Session-create JSON body bound (4096 bytes) |
+| M2 | Inngest dev mode impossible under `NODE_ENV=production` |
+| M5 | Demo multipart body bound (20 MB) |
+| L2 | UUID validation on the three session-id routes |
+
+Explicitly **out of scope** in 8C.3A: lead/admin rate-limit fail-closed behavior, security headers
+and CSP, and the L1 session existence-oracle normalization (still deferred).
+
+### Content-Length is an early guard, not a hard cap
+
+Both new body bounds are implemented as `Content-Length` inspection **before** body parsing, via the
+shared predicate `exceedsContentLengthLimit()` in `lib/api/body-limits.ts`.
+
+This is an **early rejection guard, not a mathematically complete streaming bound**. A request that
+omits `Content-Length` — for example chunked transfer encoding — is not caught by it and still
+reaches the body parser. The guard therefore does not replace, and is not a substitute for:
+
+- schema validation of the parsed body,
+- the per-file image size validation on the demo route,
+- upstream platform or proxy request limits.
+
+No streaming parser and no global request-body framework were introduced. The predicate reproduces
+the semantics already used by the Phase 8B lead and Phase 8A platform handlers: a missing or
+unparseable header falls through to normal parsing, and a body exactly at the limit is allowed.
+
+### Session-create JSON bound (H3)
+
+`POST /api/try-on/sessions` accepts four short fields (`brandSlug` ≤120, `productSlug` ≤120,
+`clientRequestId` UUID, `consentToStore` boolean).
+
+| | |
+|---|---|
+| Constant | `TRY_ON_MAX_JSON_BODY_BYTES = 4096` (`lib/try-on/sessions/constants.ts`) |
+| Enforced | After content-type and same-origin checks, **before** `request.json()` |
+| Oversized response | `400` `{"error":"Request body is too large."}`, `Cache-Control: no-store` |
+| Malformed JSON | Unchanged — existing generic `400 Invalid JSON body.` |
+| Missing `Content-Length` | Follows the normal parsing path |
+
+This bound is **unrelated to shopper image upload size**, which remains bounded separately by
+`PERSON_PHOTO_MAX_BYTES` (8 MB) and by the signed-upload contract. The two constants are asserted
+distinct in tests.
+
+### Demo multipart bound (M5)
+
+| | |
+|---|---|
+| Constant | `DEMO_MAX_MULTIPART_BODY_BYTES = 20 * 1024 * 1024` (`lib/try-on/demo-constants.ts`) |
+| Enforced | Before `request.formData()`, after the kill switch, same-origin and demo rate limits |
+| Oversized response | `413` `{"error":"Request body is too large."}`, `Cache-Control: no-store` |
+| Missing `Content-Length` | Follows the normal parsing path |
+
+The bound accommodates two maximum-size images (8 MB each) plus multipart framing overhead, so
+legitimate near-limit submissions are not rejected by the total bound alone. The existing **per-file
+8 MB validation is unchanged** and remains the authoritative image size check. The guard is placed
+after the rate limiters so an oversized attempt still consumes the attacker's own demo quota.
+
+Unchanged in this slice: demo kill switch, same-origin validation, demo rate limits, OpenAI
+behavior, image validation, and generation logic.
+
+### Inngest production dev-mode guard (M2)
+
+Dev mode disables Inngest request signature verification. Previously `INNGEST_DEV=1` alone enabled
+it, so the value leaking into a production environment would have left `/api/inngest` willing to
+accept unsigned invocations of the generation and cleanup workers.
+
+`lib/inngest/env.ts` now resolves dev mode through a pure, injectable-env function:
+
+| `NODE_ENV` | `INNGEST_DEV` | Dev mode |
+|---|---|---|
+| `production` | `1` | **`false`** |
+| `development` | `1` | `true` |
+| unset | `1` | `true` |
+| any | absent | `false` |
+
+`assertInngestEventSendingConfigured()` consequently still **fails closed** in production when
+`INNGEST_EVENT_KEY` is absent, even if `INNGEST_DEV=1` is present.
+
+Unchanged: Inngest functions, event names, retries, signing architecture,
+`process-try-on-generation`, the cleanup function, and event-sending semantics.
+
+### UUID validation on session routes (L2)
+
+`isValidTryOnSessionId()` (`lib/try-on/sessions/session-id.ts`) validates the dynamic segment before
+any authorization or database work on:
+
+- `GET /api/try-on/sessions/[sessionId]`
+- `POST /api/try-on/sessions/[sessionId]/generate`
+- `POST /api/try-on/sessions/[sessionId]/validate-upload`
+
+It uses the same `z.string().uuid()` semantics as the Phase 8B lead route. A malformed session id
+returns a generic `404 Session not found.` with `Cache-Control: no-store` — the **same status and
+message** as a missing session, so malformed input cannot be distinguished from a nonexistent
+resource. No Supabase authorization lookup runs for a malformed id.
+
+The valid-session authentication contract is unchanged: the session cookie is still required, and
+expired, deleted, and token-mismatch behavior is untouched in this slice. **L1 normalization of the
+404/403 existence oracle remains deferred.**
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `lib/api/body-limits.ts` | New — shared `exceedsContentLengthLimit()` predicate |
+| `lib/try-on/demo-constants.ts` | New — `DEMO_MAX_MULTIPART_BODY_BYTES` |
+| `lib/try-on/sessions/session-id.ts` | New — UUID validation + shared not-found message |
+| `lib/try-on/sessions/constants.ts` | Added `TRY_ON_MAX_JSON_BODY_BYTES` |
+| `app/api/try-on/sessions/route.ts` | JSON body guard before parsing |
+| `lib/try-on/demo-handler.ts` | Multipart guard before `formData()` |
+| `lib/inngest/env.ts` | `resolveInngestDevMode()` production guard |
+| `app/api/try-on/sessions/[sessionId]/route.ts` | UUID guard |
+| `app/api/try-on/sessions/[sessionId]/generate/route.ts` | UUID guard |
+| `app/api/try-on/sessions/[sessionId]/validate-upload/route.ts` | UUID guard |
+| `tests/unit/phase8c3a-request-guards.test.ts` | New — 28 tests |
+
+### No database changes
+
+Phase 8C.3A makes **no** schema, RLS, RPC, migration, or storage-policy change. Credit semantics,
+retention rules, and lead business behavior are untouched. Sentry and PostHog behavior is unchanged.
+
+### Tests
+
+`tests/unit/phase8c3a-request-guards.test.ts` covers behavior and source-contract regression:
+
+- Content-Length predicate: oversized rejected, exactly-at-limit allowed, missing and unparseable
+  headers fall through, and the advisory-only limitation is documented in source.
+- Session-create: 4096-byte bound, realistic payload well under it, inflated payload rejected, guard
+  ordered before `request.json()`, generic `400` responses preserved, bound distinct from the image bound.
+- Demo: 20 MB bound, two 8 MB images plus overhead admitted, oversized rejected, missing header
+  unchanged, guard ordered before `formData()` returning `413`, per-file 8 MB validation intact.
+- Session ids: canonical UUIDs accepted, nine malformed forms rejected, not-found message identical
+  to the missing-session message, and all three routes validate before `authorizeSessionAccess`.
+- Inngest: production never enters dev mode, development still does, absent `INNGEST_DEV` disabled,
+  and production event-key configuration still fails closed.
+
+### Phase 8C.3A regression
+
+| Check | Result |
+|---|---|
+| pgTAP | 360 pass |
+| Unit tests | 272 -> **300** pass (28 new) |
+| TypeScript | pass |
+| Lint | 4 warnings, 0 errors (baseline unchanged) |
+| Build | pass, Next.js 16.2.11 unchanged |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+
+### Runtime verification — PENDING
+
+Phase 8C.3A is **not** runtime verified. The following still require manual runtime checks:
+
+- oversized session-create JSON returns `400` without parsing
+- ordinary try-on session creation, upload validation, generation and polling remain unaffected
+- oversized demo multipart returns `413`
+- a normal two-image demo submission still succeeds
+- malformed session ids return `404` on all three routes
+- session restoration and polling behave unchanged
+
+**Phase 8C.3 is not closed.** Slices 8C.3B (rate-limit fail-closed policy) and 8C.3C (security
+headers and CSP) have not been started.
+
+---
+
+## 17. Future Phase 8C.3B+ (not started)
+
+Remaining Phase 8C.3 work from the preflight audit — lead rate-limit fail-closed policy and timeout
+handling, platform credit mutation rate limiting, security headers, and CSP (Report-Only first) —
+remains deferred until explicitly approved, as does the L1 session existence-oracle normalization and
+the framing policy decision tied to the merchant-embedding model.
 
 Further observability work (additional analytics events, merchant identity policy, browser Sentry review) remains deferred until explicitly approved.
 

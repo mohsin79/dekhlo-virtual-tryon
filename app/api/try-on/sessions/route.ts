@@ -1,6 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
+import { exceedsContentLengthLimit } from "@/lib/api/body-limits";
 import {
   assertJsonRequest,
   assertSameOrigin,
@@ -10,6 +11,7 @@ import {
 } from "@/lib/api/security";
 import { getPublicProductBySlugs } from "@/lib/catalog/get-public-product";
 import { getClientIp, limitSessionCreation } from "@/lib/rate-limit";
+import { TRY_ON_MAX_JSON_BODY_BYTES } from "@/lib/try-on/sessions/constants";
 import { createTryOnSession } from "@/lib/try-on/sessions/create-session";
 import { computeInitialSessionExpiry } from "@/lib/try-on/sessions/retention";
 import {
@@ -40,6 +42,12 @@ export async function POST(request: Request) {
 
   if (!assertSameOrigin(request)) {
     return genericErrorResponse("Invalid request origin.", 403);
+  }
+
+  if (
+    exceedsContentLengthLimit(request.headers.get("content-length"), TRY_ON_MAX_JSON_BODY_BYTES)
+  ) {
+    return genericErrorResponse("Request body is too large.", 400);
   }
 
   let body: unknown;
