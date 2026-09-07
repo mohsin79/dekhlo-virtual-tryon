@@ -337,10 +337,25 @@ npm audit --omit=dev --registry=https://registry.npmjs.org/
 
 ---
 
-## 15. Phase 8C.2 — privacy-safe PostHog analytics (implemented, not runtime verified)
+## 15. Phase 8C.2 — privacy-safe PostHog analytics
 
-**Status:** Implementation complete; **runtime verification not closed** in this phase.  
+**Status: RUNTIME VERIFIED AND CLOSED**
+
 **Package:** `posthog-js@1.421.2` (client-only; no `@posthog/next`, no server-side PostHog)
+
+**Implementation commits:**
+
+| Commit | Subject |
+|--------|---------|
+| `53bbaab` | feat: add privacy-safe product analytics |
+| `defef8d` | fix: harden analytics consent and event privacy |
+| `c030594` | chore: patch browserslist security advisories |
+
+**Architecture summary:** client-side only; explicit analytics consent required; three consent
+states (`undecided`, `accepted`, `declined`) plus an internal `resolving` hydration status that is
+never treated as a consent choice; PostHog initializes only after accepted consent; missing
+configuration safely no-ops; no server-side PostHog; no merchant `identify()`; no shopper
+`identify()`; no `alias()`; `person_profiles = "never"`; `persistence = "localStorage"`.
 
 ### Architecture
 
@@ -495,8 +510,9 @@ analytics event** (`$pageview` and all ten approved product events).
   `$geoip_disable`, that is handled separately in the PostHog project Data Capture privacy
   settings, not from application code.
 
-Runtime verification of the GeoIP behavior is **still pending**. This is a data-minimization
-measure and is not a claim of legal compliance.
+The GeoIP behavior was runtime verified on fresh events (see section 15a). The PostHog project
+client-IP discard setting is also enabled. This is a data-minimization measure and is not a claim
+of legal compliance.
 
 **On SDK identifiers.** `$session_id` is retained: it is a rotating, PostHog-generated **anonymous
 analytics** identifier used for PostHog's session-level aggregation, and it is **not** a Dekhlo
@@ -554,74 +570,183 @@ Applied to:
 
 Attributes: `data-ph-no-capture` and `ph-no-capture`
 
-### Manual runtime verification (passed — phase not yet closed)
+## 15a. Phase 8C.2 runtime verification (passed)
 
-The checklist below was executed manually against a local build with PostHog configured. All
-items passed. Phase 8C.2 is **not** marked fully closed: the production dependency audit still
-requires remediation (see the pending Browserslist advisory), which is tracked separately.
+Executed manually against a local build with PostHog configured. All items below passed.
 
-**Consent state machine**
+### Consent — undecided
 
-- `undecided` => consent banner shown and zero PostHog requests
-- `declined` => zero PostHog requests
-- `declined` cookie survives refresh
-- a valid `declined` state does not reopen the main consent banner
-- `Analytics preferences` shows the saved choice
-- `accepted` => PostHog initializes
+- missing consent cookie resolves to `undecided`
+- consent banner displayed
+- PostHog not initialized
+- zero PostHog requests
+- site remained functional
+
+### Consent — declined
+
+- Decline writes `dekhlo-analytics-consent` with `v = 1`, `state = declined`, and a timestamp only
+- no PII in the consent cookie
+- banner closes immediately
+- `declined` survives refresh
+- main consent banner remains hidden after refresh
+- no hydration flash for valid `declined` consent
+- zero PostHog requests
+- try-on, dashboard, and lead functionality remain available
+
+### Consent — Analytics preferences
+
+- `Analytics preferences` does not reset a valid choice to `undecided`
+- the stored `declined` choice is displayed
+- the user can change from `declined` to `accepted`
+- the user can later change from `accepted` to `declined`
+
+### Consent — accepted
+
 - `accepted` cookie survives refresh
-- `accepted` -> `declined` => all future PostHog initialization and capture stops
-- declining does not reduce try-on, dashboard, or lead functionality
+- PostHog initializes successfully
+- requests sent to `https://us.i.posthog.com`
+- successful ingestion verified
+- no localhost-relative PostHog host remains
 
-**Transport**
+### Consent — accepted -> declined
 
-- PostHog endpoint `https://us.i.posthog.com`
-- successful ingestion responses received
-- client-only analytics confirmed (no server-side PostHog)
+- declining after PostHog initialization stops future analytics capture
+- refresh after declining produces zero PostHog requests
+- no application functionality is removed
 
-**Live events verified**
+### Live events verified
 
 `$pageview`, `try_on_started`, `try_on_completed`, `lead_form_viewed`, `lead_submitted`,
 `dashboard_leads_viewed`
 
-**Event privacy confirmed on live payloads**
+Automated coverage exists for the remaining approved V1 event names (`signup_started`,
+`signup_completed`, `brand_created`, `product_created`, `try_on_failed`), which are asserted
+through the event allowlist and firewall unit tests rather than observed live.
 
-- `route_group` uses normalized values only
-- merchant/product dynamic URL and slugs are not transmitted
-- no raw current URL, path, or host
-- no referrer data
-- no browser/OS/device fingerprint metadata and no raw user agent
-- no timezone, screen, or viewport metadata
-- no customer name, email, or phone
-- no lead ID, Dekhlo try-on session ID, brand/product ID, or Supabase user ID
-- no customer image/file data, signed URLs, or storage paths
-- no search or free-form values
-- `person_profiles = never`, `$is_identified = false`, `$process_person_profile = false`
-- anonymous PostHog Distinct ID / Device ID / analytics Session ID retained only as anonymous
-  analytics identifiers
+### Pageview privacy
 
-**PostHog-side privacy**
+- the dynamic merchant route was normalized
+- `/try/<brandSlug>/<productSlug>` was **not** transmitted
+- `route_group = /try` was transmitted instead
+- the dashboard route normalized to `/dashboard/leads`
+- the auth page normalized to `/auth`
+- raw search parameters were not transmitted
 
-- `$geoip_disable = true` verified on fresh events
-- GeoIP-derived city, country, latitude, longitude, postal code, subdivision, and timezone absent
-  on fresh events
-- PostHog project client-IP discard setting enabled
-- raw IP address absent on fresh events
+### Event-property privacy
 
-**Automatic event firewall**
+Runtime inspection confirmed **no** shopper name, shopper email, shopper phone, lead ID, Dekhlo
+try-on session ID, brand ID, product ID, brand slug, product slug, Supabase user ID, filename,
+uploaded image, image preview, signed URL, storage path, search text, free-form reason,
+provider/OpenAI error message, cookie, or authorization token.
 
-Runtime Activity inspection confirmed no `$autocapture`, `$snapshot`, `$dead_click`,
+Allowed Dekhlo application properties remain `surface`, `outcome`, `error_category`,
+`consent_version`, `route_group`.
+
+### SDK metadata firewall
+
+`before_send` is the final outbound allowlist/firewall. Allowed events are `$pageview` plus the
+ten approved Dekhlo V1 events; all unknown and automatic events are dropped.
+
+Runtime and automated verification confirmed no `$autocapture`, `$snapshot`, `$dead_click`,
 `$exception`, `$pageleave`, `$identify`, `$create_alias`, or `$feature_flag_called` events.
 
-**Temporary debugging settings**
+The firewall strips SDK-added fields including raw current URL, host, pathname, referrer,
+session-entry URL/referrer attribution, browser, OS, device metadata, raw user agent, screen
+dimensions, viewport dimensions, timezone metadata, page title, feature-flag metadata, and SDK
+debug/capability metadata.
 
-The local-only `disable_compression: true` payload-inspection override was removed before commit;
-the repository contains no occurrence of it. `advanced_disable_flags` was deliberately not added.
+Retained anonymous technical identifiers may include `distinct_id`, `$device_id`, `$session_id`,
+`$insert_id`, `$time`, `$lib`, `$lib_version`, and `$sdk_dist_channel`.
 
-**Also verified during earlier passes**
+> `$session_id` is a PostHog-generated **anonymous analytics session identifier** and is **NOT** a
+> Dekhlo `try_on_session_id`.
 
-- uploader, lead form, and person-photo areas carry no-capture protection
-- Sentry behavior unchanged from the Phase 8C.1 privacy rules
-- no consent-banner flash during hydration for a stored decision
+### Identity and person processing
+
+- `$is_identified = false`
+- `$process_person_profile = false`
+- PostHog showed no person profile associated with the anonymous Distinct ID
+
+No analytics identity was correlated to lead rows, Supabase users, merchant accounts, or shopper
+PII.
+
+### Persistence
+
+- `persistence = localStorage`
+- no PostHog analytics identity cookie required
+- `dekhlo-analytics-consent` remains the separate first-party consent cookie
+
+### GeoIP / IP privacy
+
+**Application-side:** `$geoip_disable = true` is forced centrally on every permitted outbound
+event, and application callers cannot override it.
+
+Runtime verification on newly-created events confirmed the absence of GeoIP-derived city,
+country, continent, latitude, longitude, postal code, subdivision, and GeoIP timezone.
+
+**Project-side PostHog configuration:** the client IP discard setting is enabled, and fresh events
+were verified without a stored raw IP address.
+
+### Capture and product settings verified
+
+```typescript
+autocapture = false
+capture_pageview = false
+capture_pageleave = false
+capture_dead_clicks = false
+capture_exceptions = false
+capture_heatmaps = false
+capture_performance = false
+disable_session_recording = true
+disable_surveys = true
+disable_scroll_properties = true
+disableDeviceModel = true
+save_referrer = false
+save_campaign_params = false
+person_profiles = "never"
+persistence = "localStorage"
+```
+
+Feature-flag related restrictions remain enabled as implemented.
+`advanced_disable_flags` was deliberately **not** added.
+
+### No-capture surfaces
+
+Defense-in-depth protection using `data-ph-no-capture` and `ph-no-capture` on:
+
+- the shopper uploader
+- the person-photo try-on area
+- the entire lead capture form
+
+### Temporary debugging
+
+`disable_compression: true` was used temporarily for local payload inspection only. It was removed
+before commit, and a repository search confirmed no active `disable_compression` override remains.
+
+### Dependency security
+
+| | |
+|---|---|
+| Browserslist | `4.28.6` -> `4.28.9` |
+| Commit | `c030594` chore: patch browserslist security advisories |
+| Override needed | No |
+| Files changed for remediation | `package-lock.json` only |
+| Production dependency path | Sentry -> Babel build tooling |
+| Final production audit | **0 vulnerabilities** |
+
+The **full** `npm audit` (including dev dependencies) still reports two dev-only high advisories in
+ESLint/tooling dependencies: `brace-expansion` under `minimatch@3.x`, and `js-yaml` in ESLint
+tooling. Both are excluded from the production dependency tree and are tracked and documented
+rather than force-upgraded. A full `npm audit` is therefore **not** clean; only
+`npm audit --omit=dev` is.
+
+See `docs/dependency-security-review-2026-07.md` for advisory IDs and the full dependency path.
+
+### Legal / privacy note
+
+Analytics consent text, cookie duration, and the production privacy policy require appropriate
+legal/privacy review. This implementation makes **no** claim of GDPR, PECA, CCPA, or any other
+legal compliance.
 
 ---
 
@@ -629,5 +754,4 @@ the repository contains no occurrence of it. `advanced_disable_flags` was delibe
 
 Further observability work (additional analytics events, merchant identity policy, browser Sentry review) remains deferred until explicitly approved.
 
-Phase 8C.2 runtime verification is complete, but the phase stays open until the pending
-production dependency advisory is remediated.
+Phase 8C.1 and Phase 8C.2 are both runtime verified and closed.
