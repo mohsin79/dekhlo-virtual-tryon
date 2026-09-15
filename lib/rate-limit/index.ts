@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getRateLimitHashSecret } from "@/lib/env";
+import { resolveTrustedClientIp } from "@/lib/rate-limit/client-ip";
 import {
   allowedDecision,
   classifyUpstashResponse,
@@ -12,6 +13,7 @@ import { hashRateLimitIdentifier } from "@/lib/rate-limit/identifier-hash";
 import { hashLeadRateLimitIp } from "@/lib/rate-limit/lead-ip-hash";
 
 export type { RateLimitDecision, RateLimitOutcome } from "@/lib/rate-limit/decision";
+export type { TrustedClientIp } from "@/lib/rate-limit/client-ip";
 
 /**
  * Explicit provider timeout. @upstash/ratelimit defaults to 5000 ms and, on timeout,
@@ -157,11 +159,17 @@ export async function limitLeadCaptureBySession(sessionId: string): Promise<Rate
 }
 
 export async function limitLeadCaptureByIp(request: Request): Promise<RateLimitDecision> {
+  const client = resolveTrustedClientIp(request);
+
+  if (!client.ok) {
+    return RATE_LIMIT_UNAVAILABLE;
+  }
+
   let hashed: string;
 
   try {
     // Only the hash reaches the limiter store; the raw IP stays a local value.
-    hashed = hashLeadRateLimitIp(getClientIp(request), getRateLimitHashSecret());
+    hashed = hashLeadRateLimitIp(client.ip, getRateLimitHashSecret());
   } catch {
     return RATE_LIMIT_UNAVAILABLE;
   }
@@ -173,12 +181,24 @@ export async function limitLeadCaptureGlobal(): Promise<RateLimitDecision> {
   return leadGlobalLimiter("global");
 }
 
-export async function limitSessionCreation(ip: string): Promise<RateLimitDecision> {
-  return sessionCreateLimiter(ip);
+export async function limitSessionCreation(request: Request): Promise<RateLimitDecision> {
+  const client = resolveTrustedClientIp(request);
+
+  if (!client.ok) {
+    return RATE_LIMIT_UNAVAILABLE;
+  }
+
+  return sessionCreateLimiter(client.ip);
 }
 
-export async function limitDemoByIp(ip: string): Promise<RateLimitDecision> {
-  return demoIpLimiter(ip);
+export async function limitDemoByIp(request: Request): Promise<RateLimitDecision> {
+  const client = resolveTrustedClientIp(request);
+
+  if (!client.ok) {
+    return RATE_LIMIT_UNAVAILABLE;
+  }
+
+  return demoIpLimiter(client.ip);
 }
 
 export async function limitDemoByCookie(cookieId: string): Promise<RateLimitDecision> {
@@ -219,23 +239,4 @@ export async function limitPlatformCreditMutation(
 
 export function isDemoKillSwitchEnabled(): boolean {
   return process.env.DEMO_KILL_SWITCH === "true";
-}
-
-/**
- * Resolves the client IP for IP-scoped limiters.
- *
- * Trusted-proxy assumption: this trusts the first X-Forwarded-For entry because the
- * production reverse proxy is expected to overwrite or sanitize that header. Not all
- * proxies do — a proxy that appends instead would let a client prepend an arbitrary value
- * and rotate IP-scoped buckets. If the deployment moves away from that proxy model, this
- * header trust policy must be reviewed before relying on IP-scoped limits.
- */
-export function getClientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-
-  if (forwarded) {
-    return forwarded.split(",")[0]?.trim() || "unknown";
-  }
-
-  return request.headers.get("x-real-ip") ?? "unknown";
 }

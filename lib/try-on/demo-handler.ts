@@ -18,7 +18,6 @@ import {
   generateDemoSessionId,
 } from "@/lib/try-on/sessions/tokens";
 import {
-  getClientIp,
   isDemoKillSwitchEnabled,
   limitDemoByCookie,
   limitDemoByIp,
@@ -45,14 +44,15 @@ export async function handleDemoTryOn(request: Request) {
   }
 
   const networkRateLimit = combineRateLimitDecisions(
-    await Promise.all([limitDemoByIp(getClientIp(request)), limitDemoGlobal()]),
+    await Promise.all([limitDemoByIp(request), limitDemoGlobal()]),
   );
 
   if (networkRateLimit === "limited") {
     return rateLimitedResponse();
   }
 
-  // Fail closed: no generation runs without a trustworthy verdict.
+  // Fail closed: no generation runs without a trustworthy verdict, including when no
+  // trustworthy client address is available.
   if (networkRateLimit === "unavailable") {
     return serviceUnavailableResponse();
   }

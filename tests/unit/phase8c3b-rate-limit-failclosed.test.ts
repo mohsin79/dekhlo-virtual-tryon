@@ -224,19 +224,15 @@ describe("rate-limit provider configuration", () => {
     assert.doesNotMatch(source, /console\.warn\([^)]*(ip|identifier|actor|hashed)/i);
   });
 
-  it("documents the trusted-proxy assumption for getClientIp", () => {
+  it("no longer resolves client addresses itself", () => {
+    // Phase 8C.4D moved client-address trust into lib/rate-limit/client-ip.ts and deleted
+    // the getClientIp helper, whose first-X-Forwarded-For-entry policy was unsafe on the
+    // selected Cloudflare-fronted host. This module must not reintroduce header parsing.
     const source = readFileSync(RATE_LIMIT_MODULE, "utf8");
-    const doc = source.slice(
-      source.indexOf("Trusted-proxy assumption"),
-      source.indexOf("export function getClientIp"),
-    );
 
-    assert.match(doc, /overwrite or sanitize/i);
-    assert.match(doc, /Not all\s*\n?\s*\*?\s*proxies do/i);
-    assert.match(doc, /must be reviewed/i);
-    // Header selection itself is unchanged in this slice.
-    assert.match(source, /request\.headers\.get\("x-forwarded-for"\)/);
-    assert.match(source, /request\.headers\.get\("x-real-ip"\)/);
+    assert.doesNotMatch(source, /export function getClientIp/);
+    assert.doesNotMatch(source, /request\.headers\.get\(/);
+    assert.match(source, /resolveTrustedClientIp/);
   });
 });
 

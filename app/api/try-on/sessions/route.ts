@@ -11,7 +11,7 @@ import {
   serviceUnavailableResponse,
 } from "@/lib/api/security";
 import { getPublicProductBySlugs } from "@/lib/catalog/get-public-product";
-import { getClientIp, limitSessionCreation } from "@/lib/rate-limit";
+import { limitSessionCreation } from "@/lib/rate-limit";
 import { TRY_ON_MAX_JSON_BODY_BYTES } from "@/lib/try-on/sessions/constants";
 import { createTryOnSession } from "@/lib/try-on/sessions/create-session";
 import { computeInitialSessionExpiry } from "@/lib/try-on/sessions/retention";
@@ -65,13 +65,14 @@ export async function POST(request: Request) {
     return genericErrorResponse("Invalid session request.", 400);
   }
 
-  const rate = await limitSessionCreation(getClientIp(request));
+  const rate = await limitSessionCreation(request);
 
   if (rate.outcome === "limited") {
     return rateLimitedResponse();
   }
 
-  // Fail closed: no session row is inserted and no credit is reserved without a verdict.
+  // Fail closed: no session row is inserted and no credit is reserved without a verdict,
+  // including when no trustworthy client address is available.
   if (rate.outcome === "unavailable") {
     return serviceUnavailableResponse();
   }

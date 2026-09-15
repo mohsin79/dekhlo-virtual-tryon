@@ -1,15 +1,21 @@
 # Phase 8C — Observability and privacy-safe error handling
 
 **Status:** Phases 8C.1, 8C.2 and 8C.3 are all **runtime verified and closed**. Phase 8C.4 is **open**
-— its preflight is done and slice 8C.4A has landed; deployment configuration has not been started.  
+— its preflight is done and slices 8C.4A and 8C.4D have landed; no hosting service has been created
+and nothing has been deployed.  
 **Branch:** `B2B-saas-implementation`
+
+**Hosting decision (Phase 8C.4C):** the first production/staging target is a **Render Web Service**,
+chosen because `/api/demo/try-on` multipart requests can exceed Vercel's 4.5 MB function body limit.
+Render fronts every public web service with **Cloudflare**, which is why `CF-Connecting-IP` — not
+`X-Forwarded-For` — is the trusted client address for IP rate limiting (section 21).
 
 | Phase | Scope | Status | Commits |
 |---|---|---|---|
 | 8C.1 | Server-side Sentry, deep scrubbing, client-safe error sanitization | closed | `7a4b452`, `2e1767e`, `eedee8a` |
 | 8C.2 | Consent-gated PostHog analytics with an outbound event firewall | closed | `53bbaab`, `defef8d`, `c030594`, `1ea433e` |
 | 8C.3 | Request boundaries, fail-closed rate limiting, Report-Only browser security policy | closed | `1fb236b`, `6915320`, `7bd5e30` |
-| 8C.4 | Production readiness. Slice 8C.4A fixed the Supabase readiness probe | **open** | see section 20 |
+| 8C.4 | Production readiness. Slice 8C.4A fixed the Supabase readiness probe; slice 8C.4D fixed trusted client-IP resolution | **open** | see sections 20 and 21 |
 
 Phase 8C.3 closure carries two documented coverage boundaries — lead and demo limiter exhaustion is
 covered by automated tests rather than manual runtime checks, and the browser CSP observation covered
@@ -1085,14 +1091,25 @@ Sentry event for every rejected request during a provider outage, and no rate-co
 mechanism exists yet; building one is out of scope here. The rate-limit module contains no Sentry or
 PostHog calls, and logs no raw IP, actor UUID, hashed identifier, lead PII, session token or cookie.
 
-### Trusted-proxy assumption
+### Trusted-proxy assumption — SUPERSEDED BY PHASE 8C.4D
 
-`getClientIp` header-selection logic is **unchanged** in this slice. Its safety depends on the
-production reverse proxy overwriting or sanitizing `X-Forwarded-For`. A documented note now sits at
-the function: not all proxies behave this way — one that appends instead would let a client prepend
-an arbitrary value and rotate IP-scoped buckets — so if the deployment moves away from that proxy
-model, the header trust policy must be reviewed. No hop-count logic was implemented, as that would
-require deployment evidence.
+> **This assumption did not survive host selection. See section 21.**
+>
+> At the time of 8C.3B, `getClientIp` header selection was left unchanged and its safety was
+> assumed to rest on the production reverse proxy *overwriting or sanitizing*
+> `X-Forwarded-For`, with the header trust policy to be reviewed once the host was known.
+>
+> Phase 8C.4C selected a **Render Web Service**, and that review found the assumption false
+> for this host: Render fronts every public web service with Cloudflare, and Cloudflare
+> documents that it **appends** to an existing `X-Forwarded-For` chain rather than replacing
+> it. The first entry is therefore caller-controlled, exactly the failure mode 8C.3B flagged
+> as hypothetical. Phase 8C.4D removed `getClientIp` and replaced it with a trusted resolver.
+>
+> Nothing below this note about limiter thresholds, windows, namespaces or the three-valued
+> decision model changed. Only the client-address source did.
+
+`getClientIp` header-selection logic was **unchanged** in this slice, and no hop-count logic was
+implemented, as that would have required deployment evidence. That evidence arrived in 8C.4C.
 
 ### Files changed
 
@@ -1618,7 +1635,184 @@ pending and Phase 8C.4 is **not closed**.
 
 ---
 
-## 21. Future Phase 8C.4+ (remaining)
+## 21. Phase 8C.4D — trusted client-IP resolution for Render/Cloudflare
+
+**Status:** implemented. Commit `fix: trust Cloudflare client IP on Render`.
+**Classification:** production-blocking security fix, raised as Blocker 1 by the 8C.4C Render
+hosting compatibility preflight.
+
+### The blocker
+
+Phase 8C.3B deferred the client-address trust decision until the host was known, resting on an
+assumption that the production reverse proxy would overwrite or sanitize `X-Forwarded-For`.
+Phase 8C.4C selected a **Render Web Service** and invalidated that assumption:
+
+- Render fronts **all** inbound traffic to public web services with Cloudflare.
+- Cloudflare's documented behaviour is that if an `X-Forwarded-For` header is **already
+  present**, it **appends** the connecting proxy's address rather than replacing the header.
+- Render's proxy then appends its own load-balancer address.
+- Consequently a caller sending `X-Forwarded-For: 1.2.3.4` produced a chain whose **first entry
+  was fully caller-controlled**, and `getClientIp` returned exactly that first entry.
+
+Rotating the header therefore rotated the limiter bucket, defeating every IP-scoped limit.
+Measured against the pre-fix helper, 25 spoofed header values produced **25 distinct limiter
+buckets**; after the fix the same 25 requests collapse to **1 bucket** pinned to the real
+Cloudflare-supplied address.
+
+An aggravating factor worth recording: **Render's own documentation recommends the vulnerable
+pattern.** Their DDoS-protection article advises reading `x-forwarded-for` and its rate-limiting
+example uses `req.headers['x-forwarded-for']?.split(',')[0]` — the exact code this project had.
+Render has never documented a stripping guarantee, and a 2021 feature request asking them to
+provide one is still unanswered. The defect was only visible from Cloudflare's documentation.
+
+### Trusted-IP model
+
+New module `lib/rate-limit/client-ip.ts` (deliberately free of `server-only` so it is directly
+unit-testable) exposes a typed result rather than an in-band placeholder string:
+
+```ts
+export type TrustedClientIp = { ok: true; ip: string } | { ok: false };
+```
+
+`{ ok: false }` means *no trustworthy address is available*. It is a distinct state, not an
+address — the previous `"unknown"` sentinel conflated "no address" with "an address", which would
+have become a single shared production bucket. There is **no shared `"unknown"` production
+bucket**, and the unavailable result deliberately carries **no reason, message or detail field**
+so no diagnostic text can leak into a response or a log.
+
+| Runtime | Client-address source | No valid address |
+|---|---|---|
+| `NODE_ENV === "production"` | `CF-Connecting-IP` **only** | `{ ok: false }` → `unavailable` → **503** |
+| any other `NODE_ENV` | `CF-Connecting-IP`, then first `X-Forwarded-For` entry, then `X-Real-IP`, then `"unknown"` | never — local development always resolves |
+
+Production **never** consults `X-Forwarded-For`, `X-Real-IP`, `True-Client-IP` or `Forwarded`.
+`True-Client-IP` was rejected as a primary source because Cloudflare documents it as
+**Enterprise-plan only**, whereas `CF-Connecting-IP` is available on all plans and contains
+exactly one address. Hop counting from either end of the chain was rejected because the number of
+proxy hops Render adds is undocumented, making position-based parsing guesswork.
+
+### Validation
+
+`parseTrustedClientIp` accepts a value only if, after trimming ordinary surrounding whitespace, it
+is a single syntactically valid IPv4 or IPv6 literal, verified with `isIP` from **`node:net`**. No
+new dependency was introduced. Everything else is unavailable: missing header, blank header,
+hostnames (`attacker.example`), malformed literals (`999.999.999.999`, `1.2.3`), decorated values
+(`1.2.3.4:8080`, `[2001:db8::1]`, `1.2.3.4/24`), and any comma-separated or multi-valued string
+(`"1.2.3.4, 5.6.7.8"`). Valid IPv6 is accepted, including compressed and link-local forms.
+
+### Fail-closed behaviour
+
+Trusted-IP failure integrates with the **existing Phase 8C.3B three-valued decision model** rather
+than a second parallel failure system. It is classified `unavailable`, never `limited`, which
+preserves the established split:
+
+- **429** — a limit was actually evaluated and exceeded.
+- **503** — a trustworthy rate-limit evaluation could not be performed.
+
+The 503 reuses the existing generic `serviceUnavailableResponse()` body, `Service temporarily
+unavailable.`, with `Cache-Control: no-store`. No response mentions Cloudflare, Render, a proxy, a
+header name, an address or a validation reason.
+
+| Route | Valid IP, under limit | Valid IP, limit exceeded | No trusted production IP |
+|---|---|---|---|
+| lead capture `POST` | normal | 429 | **503**, no `create_try_on_lead` RPC |
+| `POST /api/try-on/sessions` | normal | 429 | **503**, no session row, no credit reservation |
+| `/api/demo/try-on` | normal | 429 | **503**, no OpenAI generation |
+
+In each case the fail-closed return precedes the side effect; the demo verdict is also evaluated
+before the `OPENAI_API_KEY` check, so no generation path is entered.
+
+### Affected and unaffected limiters
+
+**Affected** (now resolve a trusted address and fail closed) — the three IP-scoped namespaces:
+
+| Namespace | Identifier | Threshold |
+|---|---|---|
+| `lead-ip` | HMAC-free SHA-256 hash of the trusted address | 30 / 1 h — **unchanged** |
+| `tryon-session-create` | trusted address | 20 / 1 h — **unchanged** |
+| `demo-ip` | trusted address | 30 / 1 h — **unchanged** |
+
+**Unaffected** — identifiers, thresholds and windows all untouched: `lead-session` (5/1h, session
+id), `lead-global` (200/1h, `"global"`), `demo-cookie` (5/1d, cookie id), `demo-global`
+(`DEMO_DAILY_CAP`/1d, `"global"`), `platform-credit-actor` (30/1m, hashed Supabase user id).
+
+**No limiter threshold, window or namespace changed in this slice.** The three IP limiters now
+receive a trustworthy identifier instead of a forgeable one; nothing else about them moved.
+
+### Privacy
+
+Unchanged from 8C.3B. The lead limiter still hashes the address before it reaches the store — the
+limiter receives `hashed`, never `client.ip`. Neither `lib/rate-limit/client-ip.ts` nor
+`lib/rate-limit/index.ts` logs anything or imports Sentry or PostHog, so no raw address, header
+value or hashed identifier is logged or reported. `X-Forwarded-For` remains on the Sentry header
+denylist (section 9). Only the trusted source changed.
+
+### Hosting coupling — MUST be reviewed if the topology changes
+
+This slice intentionally couples IP rate limiting to **Render + Cloudflare**. The assumption is
+recorded in a comment at the resolver and asserted by tests. `CF-Connecting-IP` is trustworthy
+**only** where Cloudflare is guaranteed to terminate every inbound request; it is **not** safe
+behind an arbitrary proxy, and the source comment says so explicitly rather than making a generic
+claim. Moving off Render, or Render moving off Cloudflare, invalidates the model and must force a
+review before IP-scoped limits are relied on again.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `lib/rate-limit/client-ip.ts` | **new** — `TrustedClientIp`, `parseTrustedClientIp`, `resolveTrustedClientIp`, hosting-coupling comment |
+| `lib/rate-limit/index.ts` | removed `getClientIp`; `limitLeadCaptureByIp` / `limitSessionCreation` / `limitDemoByIp` take `Request`, resolve trust and fail closed |
+| `app/api/try-on/sessions/route.ts` | `limitSessionCreation(request)`; dropped the `getClientIp` import |
+| `lib/try-on/demo-handler.ts` | `limitDemoByIp(request)`; dropped the `getClientIp` import |
+| `tests/unit/phase8c4d-trusted-client-ip.test.ts` | **new** — 55 tests |
+| `tests/unit/phase8c3b-rate-limit-failclosed.test.ts` | replaced the stale trusted-proxy doc assertion with a "no header parsing in this module" contract |
+| `docs/supabase-phase-8c.md` | this section; superseded note on the 8C.3B trusted-proxy assumption |
+
+No migration, no schema, RLS, RPC, storage, retention, auth, CSP, Sentry, PostHog, Inngest, OpenAI
+or credit change. No dependency added or removed.
+
+### Regression
+
+pgTAP 360 / unit 399 → **454** (+55) / TypeScript pass / lint baseline warnings only / build pass on
+Next.js 16.2.11.
+
+**Dependency baseline deviation — not caused by this slice.** The production audit
+(`npm audit --omit=dev`) moved from the previously recorded **0 vulnerabilities** to **2
+(1 critical, 1 high)**. `package.json` and `package-lock.json` are untouched by 8C.4D; these are
+newly published advisories against the already-pinned Next.js 16.2.11 and its bundled
+`sharp@0.35.0`:
+
+| Advisory | Severity | Applies to Dekhlo? |
+|---|---|---|
+| `GHSA-2xp9-vwfh-vxw4` — unauthenticated RCE in the Image Optimization API via AVIF | critical | **Not reachable.** `next.config.mjs` sets `images: { unoptimized: true }` and `next/image` is imported nowhere, so the optimizer endpoint is disabled |
+| `GHSA-p293-qw3h-jr36` — unauthenticated RCE on Windows-hosted servers | critical | **Not applicable.** The Render target is a Linux container |
+| `GHSA-rgj7-g3m4-5g8c` — `sharp` < 0.35.4 libheif vulnerabilities | high | Reachable only through the disabled optimizer path |
+
+The remediation is `next@16.3.5`, which is outside the current pinned range and therefore a
+dependency upgrade in its own right. It was **not** applied here: `npm audit fix` was explicitly out
+of scope for this slice, and a Next.js minor upgrade needs its own regression run. This must be
+resolved in a dedicated dependency slice and is added to the Phase 8C.4 blocking-before-deploy
+conditions.
+
+Because `lib/rate-limit/index.ts` is a `server-only` module that cannot be imported under the test
+runner, limiter and route wiring is covered by source-contract assertions — the established pattern
+from 8C.3B — while the resolver itself is covered behaviourally, including a direct
+`NODE_ENV` boundary test that proves the same spoofed headers resolve in development and fail
+closed in production.
+
+### Still pending
+
+**Staging runtime spoof-resistance verification remains pending.** The 8C.4C probe **F4** — sending
+rotating fake `X-Forwarded-For` values at a deployed staging service and confirming the per-IP
+limiter is no longer evaded — cannot run until a Render staging service exists. The empirical proof
+recorded above is in-process, not end-to-end. Phase 8C.4 go/no-go conditions 1 and 2 are satisfied
+by this slice; condition 2's *deployed* re-verification is still outstanding.
+
+Phase 8C.4 remains **open**. No Render service has been created and nothing has been deployed.
+
+---
+
+## 22. Future Phase 8C.4+ (remaining)
 
 CSP enforcement (and the nonce work required to drop `script-src 'unsafe-inline'`), CSP observation of
 the authenticated dashboard and platform surfaces, manual lead and demo limiter runtime verification,
@@ -1627,5 +1821,6 @@ merchant-embedding model, and the COOP/CORP/COEP evaluation remain deferred unti
 
 Further observability work (additional analytics events, merchant identity policy, browser Sentry review) remains deferred until explicitly approved.
 
-Phases 8C.1, 8C.2 and 8C.3 are runtime verified and closed. Phase 8C.4 is open: slice 8C.4A has
-landed and deployment configuration has not been started.
+Phases 8C.1, 8C.2 and 8C.3 are runtime verified and closed. Phase 8C.4 is open: slices 8C.4A and
+8C.4D have landed, no hosting service has been created, and staging runtime verification —
+including the `X-Forwarded-For` spoof-resistance probe for 8C.4D — has not been performed.
