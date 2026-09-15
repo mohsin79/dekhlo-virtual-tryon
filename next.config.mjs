@@ -12,8 +12,10 @@ const nextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "12mb" },
   },
-  // Dekhlo does not use next/image; disable the built-in optimizer temporarily
-  // while Next.js ships with a patched optional sharp dependency.
+  // Dekhlo does not use next/image, so the built-in optimizer stays off. This is a
+  // standing decision, not a workaround: keeping it disabled removes the image
+  // optimization route entirely, which is what kept GHSA-2xp9-vwfh-vxw4 unreachable.
+  // Re-enabling it needs its own CSP (img-src) and sharp exposure review.
   images: {
     unoptimized: true,
   },

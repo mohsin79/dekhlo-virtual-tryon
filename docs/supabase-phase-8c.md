@@ -1,9 +1,10 @@
 # Phase 8C — Observability and privacy-safe error handling
 
 **Status:** Phases 8C.1, 8C.2 and 8C.3 are all **runtime verified and closed**. Phase 8C.4 is **open**
-— its preflight is done and slices 8C.4A and 8C.4D have landed; no hosting service has been created
-and nothing has been deployed.  
-**Branch:** `B2B-saas-implementation`
+— its preflight is done and slices 8C.4A, 8C.4D and 8C.4E have landed; no hosting service has been
+created and nothing has been deployed.  
+**Branch:** `B2B-saas-implementation`  
+**Next.js:** `16.3.5` (upgraded from `16.2.11` in slice 8C.4E to clear two critical advisories)
 
 **Hosting decision (Phase 8C.4C):** the first production/staging target is a **Render Web Service**,
 chosen because `/api/demo/try-on` multipart requests can exceed Vercel's 4.5 MB function body limit.
@@ -15,7 +16,7 @@ Render fronts every public web service with **Cloudflare**, which is why `CF-Con
 | 8C.1 | Server-side Sentry, deep scrubbing, client-safe error sanitization | closed | `7a4b452`, `2e1767e`, `eedee8a` |
 | 8C.2 | Consent-gated PostHog analytics with an outbound event firewall | closed | `53bbaab`, `defef8d`, `c030594`, `1ea433e` |
 | 8C.3 | Request boundaries, fail-closed rate limiting, Report-Only browser security policy | closed | `1fb236b`, `6915320`, `7bd5e30` |
-| 8C.4 | Production readiness. Slice 8C.4A fixed the Supabase readiness probe; slice 8C.4D fixed trusted client-IP resolution | **open** | see sections 20 and 21 |
+| 8C.4 | Production readiness. 8C.4A fixed the Supabase readiness probe; 8C.4D fixed trusted client-IP resolution; 8C.4E patched the Next.js/Sharp advisories | **open** | see sections 20, 21 and 22 |
 
 Phase 8C.3 closure carries two documented coverage boundaries — lead and demo limiter exhaustion is
 covered by automated tests rather than manual runtime checks, and the browser CSP observation covered
@@ -1794,6 +1795,12 @@ of scope for this slice, and a Next.js minor upgrade needs its own regression ru
 resolved in a dedicated dependency slice and is added to the Phase 8C.4 blocking-before-deploy
 conditions.
 
+> **Resolved by Phase 8C.4E** (section 22). Next.js was upgraded `16.2.11 → 16.3.5` and `sharp`
+> reached `0.35.4`, returning the production audit to **0 vulnerabilities**. Note that the
+> "not reachable / not applicable" column above describes why the risk was *bounded while
+> remediation was pending* — it is not a claim that 16.2.11 was safe, and it was not treated as a
+> substitute for patching.
+
 Because `lib/rate-limit/index.ts` is a `server-only` module that cannot be imported under the test
 runner, limiter and route wiring is covered by source-contract assertions — the established pattern
 from 8C.3B — while the resolver itself is covered behaviourally, including a direct
@@ -1812,7 +1819,102 @@ Phase 8C.4 remains **open**. No Render service has been created and nothing has 
 
 ---
 
-## 22. Future Phase 8C.4+ (remaining)
+## 22. Phase 8C.4E — Next.js / Sharp security advisory remediation
+
+**Status:** implemented. Commit `chore: patch Next.js security advisories`.
+**Classification:** dependency-security slice. Closes the audit deviation recorded in section 21.
+Full detail lives in `docs/dependency-security-review-2026-07.md` (section dated 2026-09-15).
+
+### Why this slice existed
+
+Phase 8C.4D's regression run found the production audit had moved from the previously recorded
+**0 vulnerabilities** to **2 (1 critical, 1 high)**. These advisories were **not introduced by
+Phase 8C.4D** — commit `2f07b8d` did not touch `package.json` or `package-lock.json`. They were
+published upstream after the 2026-09-07 lockfile, against the already-pinned `next@16.2.11` and the
+`sharp@0.35.0` that a July 2026 override had installed as the patched version at that time.
+
+| Advisory | Package | Severity | Patched |
+|---|---|---|---|
+| [GHSA-2xp9-vwfh-vxw4](https://github.com/advisories/GHSA-2xp9-vwfh-vxw4) — unauthenticated RCE in the Image Optimization API via AVIF | `next` | critical | 16.3.3+ |
+| [GHSA-p293-qw3h-jr36](https://github.com/advisories/GHSA-p293-qw3h-jr36) — unauthenticated RCE on Windows-hosted servers | `next` | critical | 16.3.3+ |
+| [GHSA-rgj7-g3m4-5g8c](https://github.com/advisories/GHSA-rgj7-g3m4-5g8c) — libheif issues (GHSA-g89c-p67h-r497, GHSA-2jg2-4ch7-h545) | `sharp` | high | 0.35.4 |
+
+### What changed
+
+| | Before | After |
+|---|---|---|
+| `next` (direct, exact pin) | 16.2.11 | **16.3.5** (current `latest`) |
+| `sharp` (optional under `next`) | 0.35.0, held by an override | **0.35.4** via normal transitive resolution |
+| `react` / `react-dom` | 19.2.8 | **unchanged** |
+
+The decisive detail: `package.json` carried `"next": { "sharp": "0.35.0" }`, added in July 2026 to
+push `sharp` **up** past a then-vulnerable `0.34.x` because `next@16.2.11` declared
+`optionalDependencies.sharp: "^0.34.5"`. Since `next@16.3.5` declares `^0.35.4`, that override had
+inverted its purpose and would now have **pinned `sharp` down** at the vulnerable `0.35.0`,
+silently defeating the upgrade. It was **removed** so ordinary resolution supplies the patched
+release. **No new override was added and no direct `sharp` dependency was introduced.**
+`next.postcss → $postcss` was kept, since `next@16.3.5` still nests its own `postcss@8.5.23`.
+
+The lockfile diff is **0 packages added, 0 removed, 38 versions changed**, confined to `next`, its
+SWC binaries, `@next/env`, `@swc/helpers`, `sharp` and the `@img/sharp-*` platform packages. No
+unrelated direct dependency was upgraded, and `npm audit fix` was not run in any form.
+
+### Compatibility
+
+**No application code change was required.** `16.3` is a performance/feature release; the breaking
+App Router changes were in `16.0`, which this project already ran. The repo is already on the
+`proxy.ts` convention rather than the deprecated `middleware.ts`, and uses none of the APIs removed
+in 16.x. `headers()`, `experimental.serverActions.bodySizeLimit`, `images.unoptimized`,
+`instrumentation.ts`, the Sentry integration and the Turbopack build are all unaffected.
+
+The only source edit is a corrected comment in `next.config.mjs`, which had described
+`images.unoptimized` as temporary pending a patched sharp — a precondition this upgrade satisfied,
+making the comment actively misleading about whether the optimizer may now be enabled.
+
+One new **non-blocking** deprecation warning appeared: the build reports that the Edge Runtime is
+deprecated, because pre-existing code in `app/opengraph-image.tsx` sets
+`export const runtime = "edge"`. The build succeeds; this was deliberately not changed, since
+moving that route to the Node runtime is an application behavior change. Tracked as follow-up.
+
+### Security controls re-verified
+
+All Phase 8C controls were re-confirmed against a live production server on Next.js 16.3.5:
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
+`Permissions-Policy` unchanged, `Strict-Transport-Security: max-age=31536000; includeSubDomains`,
+and CSP still **Report-Only**. No enforcing CSP, no `X-Frame-Options`, no `frame-ancestors`, no
+COOP/CORP/COEP, no `'unsafe-eval'`, no development websocket sources.
+
+Route behavior coverage is intact — every security suite passes: request guards (28), rate-limit
+fail-closed (50), security headers (30), health probe (19), trusted client IP (55), Sentry scrubber
+(18), PostHog firewall (36), lead contract (7). No threshold or semantic was altered.
+
+### Regression
+
+pgTAP **360** / unit **454** / TypeScript pass / lint 0 errors + 4 baseline warnings / build pass on
+**Next.js 16.3.5** / production `npm audit` **0 vulnerabilities**.
+
+Production start smoke on port 3020, with no OpenAI call and no credit consumed: `/` 200,
+`/auth/login` 200, `/demo` 200, `/try/nope/nope` 404, `/dashboard` 307 →
+`/auth/login?next=%2Fdashboard`, `/platform` 307 → `/auth/login?next=%2Fplatform`.
+
+### Honest scope of the mitigation argument
+
+Dekhlo's disabled image optimizer and Linux deployment target meant practical exposure to both
+critical advisories was limited. That is **not** a claim that `next@16.2.11` was safe: a disabled
+feature is a configuration choice, not a security boundary, and it says nothing about code paths
+outside the optimizer. The vulnerable version was replaced rather than reasoned around.
+
+The full audit is **not** clean and is not claimed to be. Two high-severity **dev-only** findings
+remain, absent from the `--omit=dev` tree and not installed by `npm ci --omit=dev`:
+`brace-expansion@1.1.16` under the ESLint `minimatch@3.x` paths, and `js-yaml@4.3.0` under
+`eslint → @eslint/eslintrc`. **Production audit is the release gate**, and it is at 0.
+
+Render deployment remained blocked throughout: no service was created while the production tree
+carried a critical advisory. Phase 8C.4 remains **open**, and nothing has been deployed.
+
+---
+
+## 23. Future Phase 8C.4+ (remaining)
 
 CSP enforcement (and the nonce work required to drop `script-src 'unsafe-inline'`), CSP observation of
 the authenticated dashboard and platform surfaces, manual lead and demo limiter runtime verification,
