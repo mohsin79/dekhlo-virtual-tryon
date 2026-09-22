@@ -1,8 +1,9 @@
 # Phase 8C — Observability and privacy-safe error handling
 
 **Status:** Phases 8C.1, 8C.2 and 8C.3 are all **runtime verified and closed**. Phase 8C.4 is **open**
-— its preflight is done and slices 8C.4A, 8C.4D and 8C.4E have landed; no hosting service has been
-created and nothing has been deployed.  
+— its preflight is done and slices 8C.4A, 8C.4D, 8C.4E and 8C.4F have landed. Render **staging** is
+deployed and its Supabase connectivity is proven; the Inngest staging sync is pending a redeploy with
+`INNGEST_TRY_ON_CONCURRENCY=5`. No production service exists.  
 **Branch:** `B2B-saas-implementation`  
 **Next.js:** `16.3.5` (upgraded from `16.2.11` in slice 8C.4E to clear two critical advisories)
 
@@ -16,7 +17,7 @@ Render fronts every public web service with **Cloudflare**, which is why `CF-Con
 | 8C.1 | Server-side Sentry, deep scrubbing, client-safe error sanitization | closed | `7a4b452`, `2e1767e`, `eedee8a` |
 | 8C.2 | Consent-gated PostHog analytics with an outbound event firewall | closed | `53bbaab`, `defef8d`, `c030594`, `1ea433e` |
 | 8C.3 | Request boundaries, fail-closed rate limiting, Report-Only browser security policy | closed | `1fb236b`, `6915320`, `7bd5e30` |
-| 8C.4 | Production readiness. 8C.4A fixed the Supabase readiness probe; 8C.4D fixed trusted client-IP resolution; 8C.4E patched the Next.js/Sharp advisories | **open** | see sections 20, 21 and 22 |
+| 8C.4 | Production readiness. 8C.4A fixed the Supabase readiness probe; 8C.4D fixed trusted client-IP resolution; 8C.4E patched the Next.js/Sharp advisories; 8C.4F made Inngest concurrency configurable for staging | **open** | see sections 20–23 |
 
 Phase 8C.3 closure carries two documented coverage boundaries — lead and demo limiter exhaustion is
 covered by automated tests rather than manual runtime checks, and the browser CSP observation covered
@@ -1914,7 +1915,95 @@ carried a critical advisory. Phase 8C.4 remains **open**, and nothing has been d
 
 ---
 
-## 23. Future Phase 8C.4+ (remaining)
+## 23. Phase 8C.4F — environment-configurable Inngest try-on concurrency
+
+**Status:** implemented. Commit `chore: make Inngest concurrency configurable`.
+**Classification:** deployment-compatibility slice. No Supabase, schema, RLS, storage, auth,
+rate-limit, Sentry, PostHog, CSP or Render configuration change. No paid generation occurred.
+
+### Staging state at the start of this slice
+
+Render staging (`dekhlo-staging.onrender.com`) is **deployed and healthy**. The earlier
+`/api/health/supabase` 503 (diagnosed read-only on 2026-09-21) was an environment fault, not an
+application fault: the staging `NEXT_PUBLIC_SUPABASE_URL` had been configured with a trailing
+`/rest/v1/` path. Correcting it to the bare project origin resolved the probe. A Render runtime
+diagnostic then proved the secret key is present with the expected prefix and length (41, unchanged
+by trim), the URL host is the hosted staging project, and a direct runtime query returned HTTP 200.
+No Supabase code change was required, and none was made.
+
+### The Inngest sync blocker
+
+Syncing `/api/inngest` to the `dekhlo-staging` Inngest environment was rejected because
+`process-try-on-generation` declared a global concurrency limit of **8** while the staging account
+is on the Inngest **Hobby plan, whose ceiling is 5 concurrent steps**. Upgrading the plan for a
+staging environment was not warranted.
+
+### What changed
+
+The hard-coded global limit in `lib/inngest/functions/process-try-on-generation.ts` is now read
+from **`INNGEST_TRY_ON_CONCURRENCY`** through a new accessor in `lib/inngest/env.ts`, alongside the
+existing Inngest env accessors:
+
+| `INNGEST_TRY_ON_CONCURRENCY` | Resolved global limit |
+|---|---|
+| absent, empty, or whitespace | **8** (the previous hard-coded value, now `DEFAULT_INNGEST_TRY_ON_CONCURRENCY`) |
+| `"5"` | 5 — what staging will configure |
+| any positive integer literal | that value |
+| `0`, `-1`, `1.5`, `abc`, `NaN`, `Infinity`, `+5`, `1e2` | **throws at function registration** |
+
+Invalid values deliberately do **not** fall back to 8. The accessor is evaluated at module load
+inside `inngest.createFunction(...)`, so a misconfigured deployment fails when the function is
+registered rather than quietly running with a concurrency nobody chose. No plan-specific maximum is
+enforced in code — Inngest owns the account ceiling and rejects an over-limit sync itself. The
+rejected value is never included in the error message.
+
+The per-session limit `{ limit: 1, key: "event.data.sessionId" }` is unchanged, as are the function
+id, trigger, `retries: 3`, every step id, the `onFailure` compensation path, timeouts and all OpenAI
+behaviour. `cleanup-expired-try-on-artifacts` is untouched: it declares no concurrency, keeps its id
+and its hourly cron, and does not reference the new variable — asserted by test, not by review.
+`INNGEST_DEV` behaviour is unchanged.
+
+### Registration proof
+
+The registered function objects were loaded directly (no Inngest sync, no event sent):
+
+```text
+INNGEST_TRY_ON_CONCURRENCY unset  → concurrency [{limit:1,key:"event.data.sessionId"},{limit:8}]
+INNGEST_TRY_ON_CONCURRENCY="5"    → concurrency [{limit:1,key:"event.data.sessionId"},{limit:5}]
+INNGEST_TRY_ON_CONCURRENCY="8"    → concurrency [{limit:1,key:"event.data.sessionId"},{limit:8}]
+INNGEST_TRY_ON_CONCURRENCY="0"    → registration throws: Invalid INNGEST_TRY_ON_CONCURRENCY
+INNGEST_TRY_ON_CONCURRENCY="abc"  → registration throws: Invalid INNGEST_TRY_ON_CONCURRENCY
+cleanup-expired-try-on-artifacts  → concurrency undefined, cron "0 * * * *" in every case
+```
+
+### Configuration guidance
+
+`.env.example` documents the variable as optional with default 8; **staging on the Hobby plan sets
+5**; production sets it according to the active Inngest plan and measured workload. The staging
+value is not written into any committed or local env file.
+
+### Files changed
+
+`lib/inngest/env.ts` (accessor), `lib/inngest/functions/process-try-on-generation.ts` (one line:
+`{ limit: 8 }` → `{ limit: getInngestTryOnConcurrency() }`), `.env.example`,
+`tests/unit/phase8c4f-inngest-concurrency.test.ts` (new, 30 tests), this document.
+
+### Regression
+
+Unit **454 → 484** (+30) / TypeScript pass / lint 0 errors + 4 baseline warnings / build pass on
+Next.js 16.3.5 / production `npm audit` **0 vulnerabilities**. Database tests were not rerun: this
+slice touches no migration, schema or SQL, and no repository policy requires pgTAP for an env-only
+Inngest configuration change.
+
+### Still pending
+
+**Inngest staging sync remains pending.** Staging must be redeployed with
+`INNGEST_TRY_ON_CONCURRENCY=5` before `/api/inngest` can register within the Hobby plan ceiling.
+Nothing was deployed and no sync was attempted in this slice. Phase 8C.4 remains **open**.
+
+---
+
+## 24. Future Phase 8C.4+ (remaining)
 
 CSP enforcement (and the nonce work required to drop `script-src 'unsafe-inline'`), CSP observation of
 the authenticated dashboard and platform surfaces, manual lead and demo limiter runtime verification,

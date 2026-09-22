@@ -1,5 +1,6 @@
 import { NonRetriableError } from "inngest";
 import { inngest } from "@/lib/inngest/client";
+import { getInngestTryOnConcurrency } from "@/lib/inngest/env";
 import { TRY_ON_GENERATION_REQUESTED } from "@/lib/inngest/events";
 import { captureUnexpectedError } from "@/lib/observability/sentry";
 import {
@@ -52,7 +53,10 @@ export const processTryOnGeneration = inngest.createFunction(
     retries: GENERATION_RETRIES,
     concurrency: [
       { limit: 1, key: "event.data.sessionId" },
-      { limit: 8 },
+      // Global limit is environment-configurable so staging can register within the
+      // Inngest Hobby plan ceiling (5) without lowering the production default (8).
+      // Resolved at module load: an invalid value fails registration, not a run.
+      { limit: getInngestTryOnConcurrency() },
     ],
     onFailure: async ({ event, step, error }) => {
       await step.run("release-after-final-failure", async () => {
