@@ -1,6 +1,8 @@
 import "server-only";
 
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { ACTIVE_BRAND_COOKIE, selectActiveBrandMembership } from "@/lib/auth/active-brand";
 import { createClient } from "@/lib/supabase/server";
 import { buildLoginRedirectPath, sanitizeRedirectPath } from "@/lib/auth/safe-redirect";
 import type { Database } from "@/lib/supabase/database.types";
@@ -115,7 +117,11 @@ export async function getUserContext(): Promise<UserContext | null> {
     })
     .filter((value): value is BrandMembership => value !== null);
 
-  const currentBrand = memberships[0] ?? null;
+  const cookieStore = await cookies();
+  const currentBrand = selectActiveBrandMembership(
+    memberships,
+    cookieStore.get(ACTIVE_BRAND_COOKIE)?.value,
+  );
 
   return {
     userId: user.id,

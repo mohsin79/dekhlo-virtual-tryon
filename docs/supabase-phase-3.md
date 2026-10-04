@@ -93,6 +93,7 @@ Default Supabase confirmation links can be consumed by **email-link prefetching*
 
 The application handles this safely:
 
+- `GET /auth/confirm` shows a confirmation page and does **not** call `verifyOtp` or exchange a PKCE code. The user must press the button, which submits a server action.
 - Callback failures redirect to `/auth/error` with an internal reason only (`expired_or_used`, `missing_callback`, or `confirmation_failed`).
 - The error page tells users the link may already have been used and that their email may already be confirmed, then directs them to **sign in** first.
 - The app does **not** assume confirmation status without an authenticated session.

@@ -1,4 +1,9 @@
-import type { ProductTryOnPhase } from "@/lib/try-on/sessions/session-upload-eligibility";
+import type {
+  ProductTryOnPhase,
+  TryOnSessionStatus,
+} from "@/lib/try-on/sessions/session-upload-eligibility";
+
+const IN_FLIGHT_SESSION_STATUSES: TryOnSessionStatus[] = ["queued", "processing"];
 
 const BUSY_PHASES: ProductTryOnPhase[] = [
   "creating",
@@ -15,7 +20,15 @@ export function isProductTryOnBusy(phase: ProductTryOnPhase): boolean {
 export function canStartProductTryOnGeneration(input: {
   phase: ProductTryOnPhase;
   hasPersonFile: boolean;
+  sessionStatus?: TryOnSessionStatus | null;
 }): boolean {
+  if (
+    input.sessionStatus &&
+    IN_FLIGHT_SESSION_STATUSES.includes(input.sessionStatus)
+  ) {
+    return false;
+  }
+
   if (!input.hasPersonFile) {
     return false;
   }

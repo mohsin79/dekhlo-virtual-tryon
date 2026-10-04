@@ -6,9 +6,9 @@ import { canManageProducts } from "@/lib/products/permissions";
 export default async function NewProductPage() {
   const context = await requireUserContext("/dashboard/products/new");
 
-  if (!canManageProducts(context.currentRole)) {
+  if (!canManageProducts(context.currentRole) || !context.currentBrand) {
     redirect("/dashboard/products");
   }
 
-  return <ProductForm mode="create" />;
+  return <ProductForm mode="create" brandSlug={context.currentBrand.brand.slug} />;
 }

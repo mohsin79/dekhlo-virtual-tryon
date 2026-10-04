@@ -70,8 +70,9 @@ export function OnboardingForm() {
                 required
               />
               <FieldDescription>
-                This becomes part of your public brand URL, for example{" "}
-                <span className="font-medium">/try/{slugValue || "your-brand"}</span> in a later phase.
+                Shoppers open each product at{" "}
+                <span className="font-medium">/try/{slugValue || "your-brand"}/product-name</span>.
+                You will get a copyable link after you publish a product.
               </FieldDescription>
               {state.fieldErrors?.slug ? <FieldError>{state.fieldErrors.slug}</FieldError> : null}
             </Field>

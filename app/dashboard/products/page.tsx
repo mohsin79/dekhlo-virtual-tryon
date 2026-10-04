@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ProductsPendingAnalytics } from "@/components/analytics/analytics-event-hooks";
 import { DeleteProductButton } from "@/components/products/delete-product-button";
 import { ProductImage } from "@/components/products/product-image";
+import { PublicTryOnLink } from "@/components/products/public-try-on-link";
 import { ToggleProductActiveButton } from "@/components/products/toggle-product-active-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,11 +24,12 @@ export default async function ProductsPage() {
     return null;
   }
 
+  const brand = context.currentBrand;
   const supabase = await createClient();
   const { data: products, error } = await supabase
     .from("products")
     .select("id, name, slug, product_image_path, is_active, created_at, updated_at")
-    .eq("brand_id", context.currentBrand.brandId)
+    .eq("brand_id", brand.brandId)
     .order("updated_at", { ascending: false });
 
   if (error) {
@@ -43,8 +45,8 @@ export default async function ProductsPage() {
         <div className="space-y-2">
           <h1 className="font-heading text-3xl text-foreground">Products</h1>
           <p className="max-w-2xl text-muted-foreground">
-            Manage catalog items for {context.currentBrand.brand.name}. Images are stored in the
-            public product-images bucket.
+            Manage catalog items for {brand.brand.name}. Active products get a public
+            try-on link you can share with shoppers.
           </p>
         </div>
         {canManage ? (
@@ -87,6 +89,11 @@ export default async function ProductsPage() {
                 <div className="min-w-0 flex-1 space-y-1">
                   <p className="font-medium">{product.name}</p>
                   <p className="text-sm text-muted-foreground">/{product.slug}</p>
+                  <PublicTryOnLink
+                    brandSlug={brand.brand.slug}
+                    productSlug={product.slug}
+                    active={product.is_active}
+                  />
                   <p className="text-sm text-muted-foreground">
                     {product.is_active ? "Active" : "Inactive"} · Updated {formatDate(product.updated_at)}
                   </p>

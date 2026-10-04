@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { ProductForm } from "@/components/products/product-form";
 import { ProductImage } from "@/components/products/product-image";
+import { PublicTryOnLink } from "@/components/products/public-try-on-link";
 import { requireUserContext } from "@/lib/auth/get-user-context";
 import { canManageProducts, isReadOnlyProductRole } from "@/lib/products/permissions";
 import { getProductImagePublicUrl } from "@/lib/products/public-url";
@@ -46,6 +47,11 @@ export default async function EditProductPage({
         <div className="w-48 overflow-hidden rounded-lg border border-border">
           <ProductImage path={product.product_image_path} alt={product.name} />
         </div>
+        <PublicTryOnLink
+          brandSlug={context.currentBrand.brand.slug}
+          productSlug={product.slug}
+          active={product.is_active}
+        />
       </div>
     );
   }
@@ -60,6 +66,7 @@ export default async function EditProductPage({
     <ProductForm
       mode="edit"
       productId={product.id}
+      brandSlug={context.currentBrand.brand.slug}
       initialValues={{
         name: product.name,
         slug: product.slug,

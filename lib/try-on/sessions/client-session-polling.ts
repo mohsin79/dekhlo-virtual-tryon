@@ -14,6 +14,16 @@ export type SessionPollPayload = {
   error?: string;
 };
 
+export class TryOnSessionTerminalError extends Error {
+  readonly status: "failed" | "cancelled";
+
+  constructor(message: string, status: "failed" | "cancelled") {
+    super(message);
+    this.name = "TryOnSessionTerminalError";
+    this.status = status;
+  }
+}
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -62,7 +72,10 @@ export async function pollTryOnSessionUntilTerminal(input: {
     }
 
     if (status === "failed" || status === "cancelled") {
-      throw new Error(payload?.sanitizedErrorMessage ?? payload?.error ?? "Try-on generation failed.");
+      throw new TryOnSessionTerminalError(
+        payload?.sanitizedErrorMessage ?? payload?.error ?? "Try-on generation failed.",
+        status,
+      );
     }
 
     if (status && !shouldContinueSessionPolling(status)) {

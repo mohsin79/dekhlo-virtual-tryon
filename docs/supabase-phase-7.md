@@ -70,9 +70,9 @@ After upload validation and successful `queue_try_on_session`:
 3. `POST .../validate-upload` returns **HTTP 202** with queued session metadata.
 4. The browser polls `GET /api/try-on/sessions/[sessionId]` (session cookie required).
 
-Recovery: `POST .../generate` re-dispatches the same deterministic event for `queued`/`processing` sessions (202). It does **not** reserve another credit or create a session.
+Recovery: `POST .../generate` re-dispatches the same deterministic event for `queued`/`processing` sessions (202). It does **not** reserve another credit or create a session. If dispatch is not accepted, the route returns **503** and leaves the session `queued`.
 
-If the first event send fails, the session stays `queued` and recovery via `POST .../generate` is safe.
+The shopper UI calls that recovery endpoint only while the session is `queued` (after upload validation, and again when a refresh restores a queued session). `processing` sessions are polled without another dispatch. If the first event send fails, the session stays `queued` and recovery via `POST .../generate` is safe.
 
 Demo generation (`/api/try-on`) remains synchronous and separate from merchant sessions.
 

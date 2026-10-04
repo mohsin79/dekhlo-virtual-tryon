@@ -2,6 +2,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { requireUserContext } from "@/lib/auth/get-user-context";
 import { toCreditBalanceSnapshot } from "@/lib/credits/balance";
 import { canViewCredits } from "@/lib/credits/permissions";
+import { formatCreditTransactionType } from "@/lib/credits/transaction-labels";
 import { createClient } from "@/lib/supabase/server";
 
 function formatDate(value: string): string {
@@ -9,10 +10,6 @@ function formatDate(value: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
-}
-
-function formatTransactionType(type: string): string {
-  return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
 function formatMetadataSummary(metadata: Record<string, unknown> | null): string | null {
@@ -97,8 +94,9 @@ export default async function CreditsPage() {
       <section className="space-y-2">
         <h1 className="font-heading text-3xl text-foreground">Credits</h1>
         <p className="max-w-2xl text-muted-foreground">
-          Read-only credit balance and recent transactions for {context.currentBrand.brand.name}.
-          Purchases and try-on usage will be added in later phases.
+          Read-only balance for {context.currentBrand.brand.name}. Each try-on reserves one credit
+          and consumes it when generation finishes. Dekhlo adds credits to this balance; purchases
+          are not available in the dashboard.
         </p>
       </section>
 
@@ -154,7 +152,7 @@ export default async function CreditsPage() {
                   <li key={transaction.id} className="flex flex-wrap items-start justify-between gap-3 py-4">
                     <div className="space-y-1">
                       <p className="font-medium text-foreground">
-                        {formatTransactionType(transaction.type)} · {transaction.amount}
+                        {formatCreditTransactionType(transaction.type)} · {transaction.amount}
                       </p>
                       {metadataSummary ? (
                         <p className="text-sm text-muted-foreground">{metadataSummary}</p>
