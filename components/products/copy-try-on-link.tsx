@@ -3,7 +3,15 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
-export function CopyTryOnLinkButton({ url }: { url: string }) {
+export function CopyTryOnLinkButton({
+  url,
+  idleLabel = "Copy link",
+  copiedLabel = "Copied",
+}: {
+  url: string;
+  idleLabel?: string;
+  copiedLabel?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   return (
@@ -18,7 +26,7 @@ export function CopyTryOnLinkButton({ url }: { url: string }) {
         });
       }}
     >
-      {copied ? "Copied" : "Copy link"}
+      {copied ? copiedLabel : idleLabel}
     </Button>
   );
 }

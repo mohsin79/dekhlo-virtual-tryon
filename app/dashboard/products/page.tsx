@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ProductsPendingAnalytics } from "@/components/analytics/analytics-event-hooks";
 import { DeleteProductButton } from "@/components/products/delete-product-button";
 import { ProductImage } from "@/components/products/product-image";
+import { MerchantEmbedSnippet } from "@/components/products/merchant-embed-snippet";
 import { PublicTryOnLink } from "@/components/products/public-try-on-link";
 import { ToggleProductActiveButton } from "@/components/products/toggle-product-active-button";
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,7 @@ export default async function ProductsPage() {
           <h1 className="font-heading text-3xl text-foreground">Products</h1>
           <p className="max-w-2xl text-muted-foreground">
             Manage catalog items for {brand.brand.name}. Active products get a public
-            try-on link you can share with shoppers.
+            try-on link and an embed snippet for your own product page.
           </p>
         </div>
         {canManage ? (
@@ -90,6 +91,11 @@ export default async function ProductsPage() {
                   <p className="font-medium">{product.name}</p>
                   <p className="text-sm text-muted-foreground">/{product.slug}</p>
                   <PublicTryOnLink
+                    brandSlug={brand.brand.slug}
+                    productSlug={product.slug}
+                    active={product.is_active}
+                  />
+                  <MerchantEmbedSnippet
                     brandSlug={brand.brand.slug}
                     productSlug={product.slug}
                     active={product.is_active}

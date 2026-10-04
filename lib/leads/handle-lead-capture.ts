@@ -63,7 +63,7 @@ export async function handleLeadCapturePost(
     }
   }
 
-  const auth = await authorizeTryOnSessionForLead(sessionIdParsed.data);
+  const auth = await authorizeTryOnSessionForLead(sessionIdParsed.data, request);
 
   if (!auth.ok) {
     return genericErrorResponse(auth.message, auth.status);
@@ -161,14 +161,17 @@ export async function handleLeadCapturePost(
   });
 }
 
-export async function handleLeadCaptureGet(sessionId: string): Promise<NextResponse> {
+export async function handleLeadCaptureGet(
+  request: Request,
+  sessionId: string,
+): Promise<NextResponse> {
   const sessionIdParsed = z.string().uuid().safeParse(sessionId);
 
   if (!sessionIdParsed.success) {
     return genericErrorResponse(LEAD_UNAVAILABLE_MESSAGE, 404);
   }
 
-  const auth = await authorizeTryOnSessionForLead(sessionIdParsed.data);
+  const auth = await authorizeTryOnSessionForLead(sessionIdParsed.data, request);
 
   if (!auth.ok) {
     return genericErrorResponse(auth.message, auth.status);

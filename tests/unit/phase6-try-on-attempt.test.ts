@@ -136,6 +136,7 @@ describe("createTryOnSession", () => {
       assert.equal(result.body.sessionId, insertedId);
       assert.equal(result.body.uploadUrl, "https://example.test/upload");
       assert.equal(Object.hasOwn(result.body, "anonymous_token_hash"), false);
+      assert.equal(Object.hasOwn(result.body, "sessionAccessToken"), false);
     }
   });
 
@@ -159,6 +160,53 @@ describe("createTryOnSession", () => {
     if ("body" in result) {
       assert.equal(result.body.sessionId, existing.id);
       assert.equal(result.body.status, "pending_upload");
+      assert.equal(Object.hasOwn(result.body, "sessionAccessToken"), false);
+    }
+  });
+
+  it("echoes a new session token only when the embed reveal flag is set", async () => {
+    const deps = createDeps({
+      generateSessionAccessToken: () => ({ token: "token-a", hash: "a".repeat(64) }),
+      revealSessionAccessToken: true,
+    });
+
+    const result = await createTryOnSession(
+      {
+        brandSlug: "brand-a",
+        productSlug: "try-on-product",
+        clientRequestId: "33333333-3333-3333-3333-333333333333",
+        consentToStore: false,
+      },
+      deps,
+    );
+
+    assert.equal("status" in result && result.status, 201);
+    if ("body" in result) {
+      assert.equal(result.body.sessionAccessToken, "token-a");
+      assert.notEqual(result.body.sessionAccessToken, result.body.uploadToken);
+    }
+  });
+
+  it("does not echo a replayed session token even when reveal is requested", async () => {
+    const existing = baseSession();
+    const deps = createDeps({
+      getSessionByClientRequestId: async () => existing,
+      revealSessionAccessToken: true,
+    });
+
+    const result = await createTryOnSession(
+      {
+        brandSlug: "brand-a",
+        productSlug: "try-on-product",
+        clientRequestId: existing.client_request_id,
+        consentToStore: false,
+      },
+      deps,
+    );
+
+    assert.equal("status" in result && result.status, 200);
+    if ("body" in result) {
+      assert.equal(Object.hasOwn(result.body, "sessionAccessToken"), false);
     }
   });
 

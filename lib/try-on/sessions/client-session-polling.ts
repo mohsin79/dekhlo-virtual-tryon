@@ -34,6 +34,7 @@ export async function pollTryOnSessionUntilTerminal(input: {
   productSlug: string;
   isCancelled: () => boolean;
   signal?: AbortSignal;
+  headers?: HeadersInit;
 }): Promise<SessionPollPayload> {
   let attempt = 0;
 
@@ -48,6 +49,7 @@ export async function pollTryOnSessionUntilTerminal(input: {
         method: "GET",
         cache: "no-store",
         signal: input.signal,
+        headers: input.headers,
       },
     );
 

@@ -6,9 +6,9 @@ type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
-  return handleLeadCaptureGet(sessionId);
+  return handleLeadCaptureGet(request, sessionId);
 }
 
 export async function POST(request: Request, context: RouteContext) {

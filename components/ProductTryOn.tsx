@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Uploader } from "@/components/Uploader";
 import {
+  isSessionUploadReusable,
   shouldMintNewClientRequestId,
   shouldResetAttemptOnPhotoChange,
   type ProductTryOnPhase,
@@ -34,6 +35,17 @@ import {
   readActiveTryOnSessionId,
   writeActiveTryOnSessionId,
 } from "@/lib/try-on/sessions/active-session-storage";
+import {
+  clearEmbedSessionCredential,
+  readEmbedSessionCredential,
+  writeEmbedSessionCredential,
+} from "@/lib/try-on/sessions/embed-session-storage";
+import {
+  buildSessionAuthHeaders,
+  buildTryOnSessionCreateHeaders,
+  readEmbedRevealedToken,
+  shouldRetryEmbedSessionCreate,
+} from "@/lib/embed/session-presentation";
 import {
   pollTryOnSessionUntilTerminal,
   TryOnSessionTerminalError,
@@ -83,6 +95,7 @@ type ProductTryOnProps = {
   productName: string;
   brandName: string;
   productImageUrl: string;
+  variant?: "page" | "embed";
 };
 
 export function ProductTryOn({
@@ -91,7 +104,9 @@ export function ProductTryOn({
   productName,
   brandName,
   productImageUrl,
+  variant = "page",
 }: ProductTryOnProps) {
+  const embedMode = variant === "embed";
   const productKey = `${brandSlug}/${productSlug}`;
   const attemptRef = useRef<AttemptState>(createInitialAttemptState());
   const pollAbortRef = useRef(false);
@@ -108,6 +123,23 @@ export function ProductTryOn({
   const [isRestoredCompletedSession, setIsRestoredCompletedSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inFlightSession, setInFlightSession] = useState(false);
+  const [embedToken, setEmbedToken] = useState<string | null>(null);
+  const embedTokenRef = useRef<string | null>(null);
+
+  const rememberEmbedCredential = useCallback(
+    (sessionId: string, token: string) => {
+      embedTokenRef.current = token;
+      setEmbedToken(token);
+      writeEmbedSessionCredential(brandSlug, productSlug, { sessionId, token });
+    },
+    [brandSlug, productSlug],
+  );
+
+  const forgetEmbedCredential = useCallback(() => {
+    embedTokenRef.current = null;
+    setEmbedToken(null);
+    clearEmbedSessionCredential(brandSlug, productSlug);
+  }, [brandSlug, productSlug]);
 
   useEffect(() => {
     return () => {
@@ -120,16 +152,31 @@ export function ProductTryOn({
     const controller = new AbortController();
 
     const restoreActiveSession = async () => {
-      const savedSessionId = readActiveTryOnSessionId(brandSlug, productSlug);
+      const embedCredential = embedMode ? readEmbedSessionCredential(brandSlug, productSlug) : null;
+      const savedSessionId = embedMode
+        ? (embedCredential?.sessionId ?? null)
+        : readActiveTryOnSessionId(brandSlug, productSlug);
+      const savedToken = embedMode ? (embedCredential?.token ?? null) : null;
 
       if (!savedSessionId) {
         return;
       }
 
-      if (!isValidTryOnSessionId(savedSessionId)) {
-        clearActiveTryOnSessionId(brandSlug, productSlug);
+      if (!isValidTryOnSessionId(savedSessionId) || (embedMode && !savedToken)) {
+        if (embedMode) {
+          forgetEmbedCredential();
+        } else {
+          clearActiveTryOnSessionId(brandSlug, productSlug);
+        }
         return;
       }
+
+      if (savedToken) {
+        embedTokenRef.current = savedToken;
+        setEmbedToken(savedToken);
+      }
+
+      const authHeaders = buildSessionAuthHeaders(savedToken);
 
       try {
         const response = await fetch(
@@ -138,6 +185,7 @@ export function ProductTryOn({
             method: "GET",
             cache: "no-store",
             signal: controller.signal,
+            headers: authHeaders,
           },
         );
 
@@ -154,7 +202,11 @@ export function ProductTryOn({
         });
 
         if (outcome.kind === "clear") {
-          clearActiveTryOnSessionId(brandSlug, productSlug);
+          if (embedMode) {
+            forgetEmbedCredential();
+          } else {
+            clearActiveTryOnSessionId(brandSlug, productSlug);
+          }
           return;
         }
 
@@ -178,7 +230,7 @@ export function ProductTryOn({
         setInFlightSession(outcome.status === "queued" || outcome.status === "processing");
         setPhase("polling");
 
-        await redispatchQueuedGeneration(savedSessionId, outcome.status);
+        await redispatchQueuedGeneration(savedSessionId, outcome.status, authHeaders);
 
         if (cancelled || controller.signal.aborted) {
           return;
@@ -190,6 +242,7 @@ export function ProductTryOn({
           productSlug,
           isCancelled: () => cancelled || pollAbortRef.current,
           signal: controller.signal,
+          headers: authHeaders,
         });
 
         if (cancelled || controller.signal.aborted) {
@@ -210,7 +263,11 @@ export function ProductTryOn({
           return;
         }
 
-        clearActiveTryOnSessionId(brandSlug, productSlug);
+        if (embedMode) {
+          forgetEmbedCredential();
+        } else {
+          clearActiveTryOnSessionId(brandSlug, productSlug);
+        }
       } catch (err) {
         if (cancelled || controller.signal.aborted) {
           return;
@@ -222,7 +279,11 @@ export function ProductTryOn({
             sessionStatus: err.status,
           };
           setInFlightSession(false);
-          clearActiveTryOnSessionId(brandSlug, productSlug);
+          if (embedMode) {
+            forgetEmbedCredential();
+          } else {
+            clearActiveTryOnSessionId(brandSlug, productSlug);
+          }
           setError(err.message);
           setPhase("error");
           return;
@@ -239,7 +300,11 @@ export function ProductTryOn({
           return;
         }
 
-        clearActiveTryOnSessionId(brandSlug, productSlug);
+        if (embedMode) {
+          forgetEmbedCredential();
+        } else {
+          clearActiveTryOnSessionId(brandSlug, productSlug);
+        }
       }
     };
 
@@ -249,7 +314,7 @@ export function ProductTryOn({
       cancelled = true;
       controller.abort();
     };
-  }, [brandSlug, productSlug]);
+  }, [brandSlug, embedMode, forgetEmbedCredential, productSlug]);
 
   const mintClientRequestIdIfNeeded = useCallback(() => {
     if (
@@ -312,6 +377,9 @@ export function ProductTryOn({
   const handleChooseAnotherPhoto = useCallback(() => {
     pollAbortRef.current = true;
     clearActiveTryOnSessionId(brandSlug, productSlug);
+    if (embedMode) {
+      forgetEmbedCredential();
+    }
     setInFlightSession(false);
     setPersonFile(null);
     setCompletedSessionId(null);
@@ -320,7 +388,7 @@ export function ProductTryOn({
     setError(null);
     setUploaderKey((value) => value + 1);
     setPhase(phaseAfterChooseAnotherPhoto());
-  }, [brandSlug, productSlug]);
+  }, [brandSlug, embedMode, forgetEmbedCredential, productSlug]);
 
   const startTryOn = useCallback(async () => {
     if (
@@ -378,24 +446,78 @@ export function ProductTryOn({
         outcome: "started",
       });
 
-      const createResponse = await fetch("/api/try-on/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brandSlug,
-          productSlug,
-          clientRequestId,
-          consentToStore,
-        }),
-      });
+      if (embedMode) {
+        if (!attemptRef.current.sessionId) {
+          embedTokenRef.current = null;
+          clearEmbedSessionCredential(brandSlug, productSlug);
+        } else if (!embedTokenRef.current) {
+          const stored = readEmbedSessionCredential(brandSlug, productSlug);
 
-      const createPayload = await createResponse.json().catch(() => null);
+          if (stored?.sessionId === attemptRef.current.sessionId) {
+            embedTokenRef.current = stored.token;
+            setEmbedToken(stored.token);
+          }
+        }
+      }
 
-      if (!createResponse.ok) {
+      const postCreate = (requestId: string) =>
+        fetch("/api/try-on/sessions", {
+          method: "POST",
+          headers: buildTryOnSessionCreateHeaders({
+            embed: embedMode,
+            sessionAccessToken: embedTokenRef.current,
+          }),
+          body: JSON.stringify({
+            brandSlug,
+            productSlug,
+            clientRequestId: requestId,
+            consentToStore,
+          }),
+        });
+
+      let activeRequestId = clientRequestId;
+      let createResponse = await postCreate(activeRequestId);
+
+      if (embedMode && shouldRetryEmbedSessionCreate(createResponse.status)) {
+        embedTokenRef.current = null;
+        setEmbedToken(null);
+        activeRequestId = crypto.randomUUID();
+        attemptRef.current = {
+          ...attemptRef.current,
+          clientRequestId: activeRequestId,
+          sessionId: null,
+        };
+        createResponse = await postCreate(activeRequestId);
+      }
+
+      const createPayload = (await createResponse.json().catch(() => null)) as {
+        sessionId?: string;
+        status?: TryOnSessionStatus;
+        error?: string;
+        uploadUrl?: string;
+        sessionAccessToken?: unknown;
+      } | null;
+
+      if (!createResponse.ok || !createPayload?.sessionId || !createPayload.uploadUrl) {
         throw new Error(createPayload?.error ?? "Unable to start try-on.");
       }
 
-      writeActiveTryOnSessionId(brandSlug, productSlug, createPayload.sessionId);
+      if (embedMode) {
+        const revealed = readEmbedRevealedToken(createPayload);
+        const token = revealed ?? (createResponse.status === 200 ? embedTokenRef.current : null);
+
+        if (!token) {
+          throw new Error(
+            "The try-on session could not be secured in this embed. Refresh the page and try again.",
+          );
+        }
+
+        rememberEmbedCredential(createPayload.sessionId, token);
+      } else {
+        writeActiveTryOnSessionId(brandSlug, productSlug, createPayload.sessionId);
+      }
+
+      const authHeaders = buildSessionAuthHeaders(embedMode ? embedTokenRef.current : null);
 
       attemptRef.current = {
         ...attemptRef.current,
@@ -423,7 +545,7 @@ export function ProductTryOn({
 
       const validateResponse = await fetch(
         `/api/try-on/sessions/${createPayload.sessionId}/validate-upload`,
-        { method: "POST" },
+        { method: "POST", headers: authHeaders },
       );
       const validatePayload = await validateResponse.json().catch(() => null);
 
@@ -456,7 +578,7 @@ export function ProductTryOn({
       };
       setInFlightSession(queuedStatus === "queued" || queuedStatus === "processing");
 
-      await redispatchQueuedGeneration(createPayload.sessionId, queuedStatus);
+      await redispatchQueuedGeneration(createPayload.sessionId, queuedStatus, authHeaders);
 
       setPhase("polling");
       activePhase = "polling";
@@ -466,6 +588,7 @@ export function ProductTryOn({
         brandSlug,
         productSlug,
         isCancelled: () => pollAbortRef.current,
+        headers: authHeaders,
       });
 
       attemptRef.current = {
@@ -498,6 +621,9 @@ export function ProductTryOn({
         };
         setInFlightSession(false);
         clearActiveTryOnSessionId(brandSlug, productSlug);
+        if (embedMode) {
+          forgetEmbedCredential();
+        }
       } else {
         const inFlight =
           attemptRef.current.sessionStatus === "queued" ||
@@ -506,6 +632,10 @@ export function ProductTryOn({
         setInFlightSession(inFlight);
         if (!inFlight) {
           clearActiveTryOnSessionId(brandSlug, productSlug);
+          const status = attemptRef.current.sessionStatus;
+          if (embedMode && (!status || !isSessionUploadReusable(status))) {
+            forgetEmbedCredential();
+          }
         }
       }
 
@@ -524,12 +654,15 @@ export function ProductTryOn({
     brandSlug,
     consentToStore,
     currentResultUrl,
+    embedMode,
+    forgetEmbedCredential,
     mintClientRequestIdIfNeeded,
     personFile,
     inFlightSession,
     phase,
     productKey,
     productSlug,
+    rememberEmbedCredential,
   ]);
 
   const canGenerate = canStartProductTryOnGeneration({
@@ -657,7 +790,12 @@ export function ProductTryOn({
                 Download result
               </a>
               {phase === "done" && completedSessionId && displayResultUrl ? (
-                <LeadCaptureForm key={completedSessionId} sessionId={completedSessionId} brandName={brandName} />
+                <LeadCaptureForm
+                  key={completedSessionId}
+                  sessionId={completedSessionId}
+                  brandName={brandName}
+                  sessionAccessToken={embedMode ? embedToken : null}
+                />
               ) : null}
             </div>
           ) : null}

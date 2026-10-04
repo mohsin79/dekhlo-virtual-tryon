@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { buildLoginRedirectPath, sanitizeRedirectPath } from "@/lib/auth/safe-redirect";
+import { framingHeadersForPath } from "@/lib/embed/framing";
 import { getSupabasePublishableKey, getSupabaseUrl } from "@/lib/env";
 
 const PROTECTED_PREFIXES = ["/dashboard", "/onboarding", "/platform"] as const;
@@ -14,6 +15,14 @@ function isProtectedPath(pathname: string): boolean {
 
 function isAuthEntryPath(pathname: string): boolean {
   return AUTH_ENTRY_PATHS.some((path) => pathname === path);
+}
+
+function withFraming(response: NextResponse, pathname: string): NextResponse {
+  for (const header of framingHeadersForPath(pathname)) {
+    response.headers.set(header.key, header.value);
+  }
+
+  return response;
 }
 
 export async function proxy(request: NextRequest) {
@@ -42,28 +51,28 @@ export async function proxy(request: NextRequest) {
   const isAuthenticated = !!userData.user;
 
   if (pathname === "/auth/reset-password") {
-    return response;
+    return withFraming(response, pathname);
   }
 
   if (pathname === "/auth/confirm") {
-    return response;
+    return withFraming(response, pathname);
   }
 
   if (!isAuthenticated && isProtectedPath(pathname)) {
     const loginPath = buildLoginRedirectPath(`${pathname}${request.nextUrl.search}`);
-    return NextResponse.redirect(new URL(loginPath, request.url));
+    return withFraming(NextResponse.redirect(new URL(loginPath, request.url)), pathname);
   }
 
   if (isAuthenticated && isAuthEntryPath(pathname)) {
     const next = sanitizeRedirectPath(request.nextUrl.searchParams.get("next"), "/dashboard");
-    return NextResponse.redirect(new URL(next, request.url));
+    return withFraming(NextResponse.redirect(new URL(next, request.url)), pathname);
   }
 
   if (isAuthenticated && pathname === "/auth/forgot-password") {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return withFraming(NextResponse.redirect(new URL("/dashboard", request.url)), pathname);
   }
 
-  return response;
+  return withFraming(response, pathname);
 }
 
 export const config = {

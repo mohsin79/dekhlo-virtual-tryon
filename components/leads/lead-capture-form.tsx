@@ -9,12 +9,14 @@ import {
 import { readLeadFormDismissed, writeLeadFormDismissed } from "@/lib/leads/dismiss-storage";
 import { parseLeadCaptureBody } from "@/lib/leads/validation";
 import { trackAnalyticsEvent } from "@/lib/analytics/track";
+import { buildSessionAuthHeaders } from "@/lib/embed/session-presentation";
 
 type LeadStatusState = "loading" | "ready" | "submitted" | "unavailable" | "status-error";
 
 type LeadCaptureFormProps = {
   sessionId: string;
   brandName: string;
+  sessionAccessToken?: string | null;
 };
 
 function mapSubmitError(status: number, payload: { error?: string } | null): string {
@@ -41,7 +43,11 @@ function mapSubmitError(status: number, payload: { error?: string } | null): str
   return payload?.error ?? "Unable to submit your details right now. Please try again.";
 }
 
-export function LeadCaptureForm({ sessionId, brandName }: LeadCaptureFormProps) {
+export function LeadCaptureForm({
+  sessionId,
+  brandName,
+  sessionAccessToken = null,
+}: LeadCaptureFormProps) {
   const formId = useId();
   const statusAbortRef = useRef<AbortController | null>(null);
   const idempotencyKeyRef = useRef(crypto.randomUUID());
@@ -71,6 +77,7 @@ export function LeadCaptureForm({ sessionId, brandName }: LeadCaptureFormProps) 
           credentials: "same-origin",
           cache: "no-store",
           signal: controller.signal,
+          headers: buildSessionAuthHeaders(sessionAccessToken),
         });
 
         const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
@@ -106,7 +113,7 @@ export function LeadCaptureForm({ sessionId, brandName }: LeadCaptureFormProps) 
     return () => {
       controller.abort();
     };
-  }, [sessionId]);
+  }, [sessionAccessToken, sessionId]);
 
   useEffect(() => {
     if (statusState === "ready" && !dismissed && !leadFormViewedRef.current) {
@@ -162,7 +169,10 @@ export function LeadCaptureForm({ sessionId, brandName }: LeadCaptureFormProps) 
         const response = await fetch(`/api/try-on/sessions/${sessionId}/lead`, {
           method: "POST",
           credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...buildSessionAuthHeaders(sessionAccessToken),
+          },
           cache: "no-store",
           body: JSON.stringify({
             fullName: parsed.data.normalizedFullName ?? undefined,
@@ -225,6 +235,7 @@ export function LeadCaptureForm({ sessionId, brandName }: LeadCaptureFormProps) 
       email,
       fullName,
       phone,
+      sessionAccessToken,
       sessionId,
       statusState,
       submitting,

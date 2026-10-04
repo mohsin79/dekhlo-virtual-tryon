@@ -15,6 +15,7 @@ export type CreateSessionSuccess = {
   body: ReturnType<typeof toPublicSessionStatus> & {
     uploadUrl: string;
     uploadToken: string;
+    sessionAccessToken?: string;
   };
 };
 
@@ -48,6 +49,12 @@ export type CreateSessionDeps = {
   removePersonPhoto: (path: string) => Promise<void>;
   setSessionAccessCookie: (sessionId: string, token: string, expiresAt: Date) => Promise<void>;
   generateSessionAccessToken: () => { token: string; hash: string };
+  /**
+   * Embed creates echo the new plaintext token once, in this response only.
+   * Idempotent replays never echo a token, so a cookie-backed session cannot
+   * be copied into JavaScript by replaying `clientRequestId`.
+   */
+  revealSessionAccessToken?: boolean;
   buildPersonStoragePath: (brandId: string, sessionId: string, extension: "jpg") => string;
   computeInitialSessionExpiry: (now?: Date) => Date;
 };
@@ -141,6 +148,7 @@ export async function createTryOnSession(
       ...toPublicSessionStatus(session),
       uploadUrl: signedUpload.signedUrl,
       uploadToken: signedUpload.token,
+      ...(deps.revealSessionAccessToken ? { sessionAccessToken: access.token } : {}),
     },
   };
 }

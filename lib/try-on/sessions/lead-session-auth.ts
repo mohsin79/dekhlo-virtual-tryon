@@ -1,6 +1,6 @@
 import "server-only";
 
-import { readSessionAccessToken } from "@/lib/try-on/sessions/tokens";
+import { readPresentedSessionAccessToken } from "@/lib/try-on/sessions/tokens";
 import { getSessionById, type TryOnSessionRow } from "@/lib/try-on/sessions/service";
 import { evaluateLeadSessionAuthorization } from "@/lib/try-on/sessions/lead-session-auth-logic";
 
@@ -21,14 +21,15 @@ type LeadAuthSuccess = {
 
 /**
  * Enumeration-resistant authorization for lead capture.
- * Missing session cookie → 401.
+ * Missing session credential → 401.
  * Wrong token, missing session row share the same 404 message (enumeration-resistant).
  * Expired or soft-deleted sessions with a valid token return 410.
  */
 export async function authorizeTryOnSessionForLead(
   sessionId: string,
+  request?: Request,
 ): Promise<LeadAuthSuccess | LeadAuthFailure> {
-  const token = await readSessionAccessToken(sessionId);
+  const token = await readPresentedSessionAccessToken(sessionId, request);
   const session = await getSessionById(sessionId);
 
   const evaluation = evaluateLeadSessionAuthorization({
