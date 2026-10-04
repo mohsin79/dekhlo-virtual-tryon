@@ -174,12 +174,16 @@ describe("ProductTryOn refresh restoration integration", () => {
     assert.match(source, /writeActiveTryOnSessionId\(brandSlug, productSlug, createPayload\.sessionId\)/);
   });
 
-  it("resumes polling without enqueueing another generation", () => {
+  it("resumes polling without creating another session", () => {
     const source = readFileSync("components/ProductTryOn.tsx", "utf8");
+    const recovery = readFileSync("lib/try-on/sessions/redispatch-generation.ts", "utf8");
     assert.match(source, /pollTryOnSessionUntilTerminal/);
+    assert.match(source, /redispatchQueuedGeneration/);
     assert.equal(source.includes("/validate-upload"), true);
     assert.equal(source.match(/\/validate-upload/g)?.length, 1);
     assert.equal(source.match(/fetch\("\/api\/try-on\/sessions"/g)?.length, 1);
+    assert.match(recovery, /shouldRedispatchQueuedGeneration/);
+    assert.equal(recovery.includes("queue_try_on_session"), false);
   });
 
   it("clears stored session IDs for invalid sessions and new try-ons", () => {

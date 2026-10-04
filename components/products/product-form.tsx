@@ -25,12 +25,14 @@ type ProductFormValues = {
 export function ProductForm({
   mode,
   productId,
+  brandSlug,
   initialValues,
   currentImagePath,
   currentImageUrl,
 }: {
   mode: "create" | "edit";
   productId?: string;
+  brandSlug: string;
   initialValues?: ProductFormValues;
   currentImagePath?: string | null;
   currentImageUrl?: string | null;
@@ -100,7 +102,8 @@ export function ProductForm({
                 required
               />
               <FieldDescription>
-                Unique within your brand. Used in future public try-on routes.
+                Unique within your brand. Active products are shared at /try/{brandSlug}/
+                {slugValue || "product-name"}.
               </FieldDescription>
               {state.fieldErrors?.slug ? <FieldError>{state.fieldErrors.slug}</FieldError> : null}
             </Field>
@@ -120,8 +123,8 @@ export function ProductForm({
                 </FieldLabel>
               </div>
               <FieldDescription>
-                Inactive products remain visible to your team but are deferred from public access
-                until Phase 6.
+                Inactive products stay visible to your team and are hidden from the public try-on
+                link.
               </FieldDescription>
             </Field>
 

@@ -44,10 +44,17 @@ export async function POST(request: Request, context: RouteContext) {
     return genericErrorResponse("Session is not ready for generation.", 409);
   }
 
-  await dispatchTryOnGeneration({
+  const dispatched = await dispatchTryOnGeneration({
     sessionId,
     brandId: session.brand_id,
   });
+
+  if (!dispatched.ok) {
+    return genericErrorResponse(
+      "Generation could not be started. Refresh this page to try again.",
+      503,
+    );
+  }
 
   return jsonNoStore(
     {

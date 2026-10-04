@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AnalyticsPreferencesControl } from "@/components/analytics/analytics-preferences-control";
+import { BrandSwitcher } from "@/components/dashboard/brand-switcher";
 import { LogoutButton } from "@/components/dashboard/logout-button";
 import { Logo } from "@/components/Logo";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -111,6 +112,7 @@ export function DashboardShell({
             <Logo />
           </Link>
           <BrandSummary context={context} />
+          <BrandSwitcher context={context} />
           <Separator />
           <SidebarNav pathname={pathname} context={context} />
           <div className="mt-auto space-y-3">
@@ -135,6 +137,7 @@ export function DashboardShell({
                 </SheetHeader>
                 <div className="mt-6 space-y-6">
                   <BrandSummary context={context} />
+                  <BrandSwitcher context={context} />
                   <SidebarNav pathname={pathname} context={context} />
                   <LogoutButton />
                 </div>

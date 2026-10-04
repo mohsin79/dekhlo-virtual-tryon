@@ -2,67 +2,42 @@
 
 _Dekh lo, phir socho._ See how a style might look on you before you decide.
 
-Dekhlo is an AI virtual try-on for Pakistani fashion — shalwar kameez, abayas, bridal, formal and western wear. Users drop **their photo** and **an outfit** (a flat product shot or a model wearing it), tap **Try this on**, and get a photorealistic style preview. The product is honest by design: it previews the *style*, not a guaranteed physical fit.
+Dekhlo is a multi-tenant virtual try-on for Pakistani fashion brands. Merchants publish a catalog, share a public try-on link for each active product, and shoppers upload only their photo. Customer photos and results stay private. Credits are reserved only after a photo upload is validated.
 
-## Stack & why
+## Stack
 
-- **Next.js 14 (App Router) + React 18 + TypeScript** — server-rendered marketing copy and a first-class **SEO** story: the Metadata API (title template, OpenGraph, Twitter, canonical), `sitemap.ts`, `robots.ts`, a PWA `manifest.ts`, JSON-LD structured data, and a generated `opengraph-image`. Great for **branding** (custom domain, OG cards, installable PWA) and easy one-click deploys.
-- **Tailwind CSS** for layout, over the **Organic design system** tokens (warm cream ground, terracotta + sage accents, Caprasimo/Figtree type) ported into `app/globals.css`.
-- **OpenAI Responses API** — chat model (`gpt-5.6`) with the `image_generation` tool, matching the ChatGPT virtual try-on flow. Works for clothing, accessories, makeup, and more.
+- **Next.js 16 (App Router) + React 19 + TypeScript**
+- **Supabase** for auth, Postgres row level security, and storage
+- **OpenAI Responses API** for generation. The try-on prompt and model settings are preserved.
+- **Inngest** for background generation and retention cleanup
+- **Upstash Redis** for rate limits
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.example .env.local   # then add your OPENAI_API_KEY
-npm run dev                  # http://localhost:3000
+cp .env.example .env.local
+npm run dev
 ```
 
-### Environment
+Set every required value in `.env.local`. Do not commit `.env.local` or `.env.production`. `.env.example` lists the variable names and which ones are server-only.
 
-| Variable | Purpose |
+## Routes
+
+| Route | Who |
 | --- | --- |
-| `OPENAI_API_KEY` | **Required.** Server-side key for the try-on route. |
-| `OPENAI_CHAT_MODEL` | Optional. Defaults to `gpt-5.6`. Use `gpt-4.1-mini` after org verification for lower cost. |
-| `OPENAI_IMAGE_QUALITY` | Optional. `medium` (default), `high`, `low`, or `auto`. |
-| `OPENAI_VISION_DETAIL` | Optional. `low` (default) or `high` for upload analysis. |
-| `NEXT_PUBLIC_SITE_URL` | Your production URL — feeds canonical URLs, sitemap, robots, OG tags. |
+| `/` | Marketing |
+| `/demo` | Rate-limited two-image demo. Does not spend merchant credits. |
+| `/try/[brandSlug]/[productSlug]` | Public product try-on. Person photo only. |
+| `/auth/*` | Merchant sign-in, sign-up, and password reset |
+| `/onboarding` | First brand for a new merchant |
+| `/dashboard` | Products, leads, and credits |
+| `/platform` | Platform admin credit operations |
 
-## How the try-on works
+Email confirmation and password-reset links open `/auth/confirm` and wait for an explicit click before the token is used.
 
-`POST /api/try-on` (multipart) with `person` and `item` image files →
-the route sends both images plus the virtual try-on prompt to `openai.responses.create`
-with the `image_generation` tool (same approach as ChatGPT), and returns
-`{ image: "data:image/png;base64,…" }`. The client shows it side-by-side
-with the chosen item and the honest "style, not fit" note.
+## Tests
 
-- Runs on the Node runtime; `maxDuration` is 180s.
-- Images are capped at 8MB each and never stored server-side.
-- Tune the prompt in `lib/try-on-prompt.ts`.
-
-## Project structure
-
+```bash
+npm run test:unit
 ```
-app/
-  layout.tsx          Fonts, metadata, JSON-LD
-  page.tsx            Server-rendered hero + <TryOnStudio/>
-  globals.css         Organic tokens + component layer
-  sitemap.ts robots.ts manifest.ts opengraph-image.tsx icon.svg
-  api/try-on/route.ts OpenAI image generation
-components/
-  TryOnStudio.tsx     Client: uploads, generate, result, actions
-  Uploader.tsx        Drag-and-drop image input with preview
-  Logo.tsx
-lib/site.ts           Brand + SEO config (single source of truth)
-```
-
-## Deploy
-
-Deploy to **Vercel** (recommended for Next.js): set the three env vars in the project settings and point your domain (e.g. `dekhlo.pk`). `output` is the default Node server so the OpenAI route runs as a serverless function.
-
-## Next steps / ideas
-
-- Saved looks gallery (persist to a DB + auth).
-- Rate limiting on `/api/try-on` (e.g. Upstash) before launch.
-- Per-brand outfit catalog so users pick instead of upload.
-- Multiple angles / colour variations per generation.

@@ -34,7 +34,14 @@ import {
   readActiveTryOnSessionId,
   writeActiveTryOnSessionId,
 } from "@/lib/try-on/sessions/active-session-storage";
-import { pollTryOnSessionUntilTerminal } from "@/lib/try-on/sessions/client-session-polling";
+import {
+  pollTryOnSessionUntilTerminal,
+  TryOnSessionTerminalError,
+} from "@/lib/try-on/sessions/client-session-polling";
+import {
+  GenerationNotStartedError,
+  redispatchQueuedGeneration,
+} from "@/lib/try-on/sessions/redispatch-generation";
 import {
   buildTryOnSessionStatusUrl,
   evaluateSessionRestoreResponse,
@@ -100,6 +107,7 @@ export function ProductTryOn({
   const [previousResultUrl, setPreviousResultUrl] = useState<string | null>(null);
   const [isRestoredCompletedSession, setIsRestoredCompletedSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inFlightSession, setInFlightSession] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -157,6 +165,7 @@ export function ProductTryOn({
         };
 
         if (outcome.kind === "completed") {
+          setInFlightSession(false);
           setCurrentResultUrl(outcome.resultUrl);
           setCompletedSessionId(savedSessionId);
           setPreviousResultUrl(null);
@@ -166,7 +175,14 @@ export function ProductTryOn({
         }
 
         pollAbortRef.current = false;
+        setInFlightSession(outcome.status === "queued" || outcome.status === "processing");
         setPhase("polling");
+
+        await redispatchQueuedGeneration(savedSessionId, outcome.status);
+
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
 
         const pollPayload = await pollTryOnSessionUntilTerminal({
           sessionId: savedSessionId,
@@ -185,6 +201,7 @@ export function ProductTryOn({
             ...attemptRef.current,
             sessionStatus: "completed",
           };
+          setInFlightSession(false);
           setCurrentResultUrl(pollPayload.resultUrl);
           setCompletedSessionId(savedSessionId);
           setPreviousResultUrl(null);
@@ -194,10 +211,35 @@ export function ProductTryOn({
         }
 
         clearActiveTryOnSessionId(brandSlug, productSlug);
-      } catch {
-        if (!cancelled && !controller.signal.aborted) {
-          clearActiveTryOnSessionId(brandSlug, productSlug);
+      } catch (err) {
+        if (cancelled || controller.signal.aborted) {
+          return;
         }
+
+        if (err instanceof TryOnSessionTerminalError) {
+          attemptRef.current = {
+            ...attemptRef.current,
+            sessionStatus: err.status,
+          };
+          setInFlightSession(false);
+          clearActiveTryOnSessionId(brandSlug, productSlug);
+          setError(err.message);
+          setPhase("error");
+          return;
+        }
+
+        if (
+          err instanceof GenerationNotStartedError ||
+          attemptRef.current.sessionStatus === "queued" ||
+          attemptRef.current.sessionStatus === "processing"
+        ) {
+          setInFlightSession(true);
+          setError(err instanceof Error ? err.message : "Try-on is still in progress. Refresh this page to check again.");
+          setPhase("error");
+          return;
+        }
+
+        clearActiveTryOnSessionId(brandSlug, productSlug);
       }
     };
 
@@ -270,6 +312,7 @@ export function ProductTryOn({
   const handleChooseAnotherPhoto = useCallback(() => {
     pollAbortRef.current = true;
     clearActiveTryOnSessionId(brandSlug, productSlug);
+    setInFlightSession(false);
     setPersonFile(null);
     setCompletedSessionId(null);
     setIsRestoredCompletedSession(false);
@@ -280,7 +323,14 @@ export function ProductTryOn({
   }, [brandSlug, productSlug]);
 
   const startTryOn = useCallback(async () => {
-    if (!personFile || !canStartProductTryOnGeneration({ phase, hasPersonFile: true })) {
+    if (
+      !personFile ||
+      !canStartProductTryOnGeneration({
+        phase,
+        hasPersonFile: true,
+        sessionStatus: inFlightSession ? "queued" : null,
+      })
+    ) {
       return;
     }
 
@@ -382,6 +432,7 @@ export function ProductTryOn({
           ...attemptRef.current,
           sessionStatus: "failed",
         };
+        setInFlightSession(false);
         throw new Error(
           validatePayload?.sanitizedErrorMessage ??
             "This brand does not have enough credits for try-on right now.",
@@ -389,17 +440,23 @@ export function ProductTryOn({
       }
 
       if (validateResponse.status !== 202 && !validateResponse.ok) {
+        const failedStatus = validatePayload?.status ?? "failed";
         attemptRef.current = {
           ...attemptRef.current,
-          sessionStatus: validatePayload?.status ?? "failed",
+          sessionStatus: failedStatus,
         };
+        setInFlightSession(failedStatus === "queued" || failedStatus === "processing");
         throw new Error(validatePayload?.error ?? "Upload validation failed.");
       }
 
+      const queuedStatus = validatePayload?.status ?? "queued";
       attemptRef.current = {
         ...attemptRef.current,
-        sessionStatus: validatePayload?.status ?? "queued",
+        sessionStatus: queuedStatus,
       };
+      setInFlightSession(queuedStatus === "queued" || queuedStatus === "processing");
+
+      await redispatchQueuedGeneration(createPayload.sessionId, queuedStatus);
 
       setPhase("polling");
       activePhase = "polling";
@@ -415,6 +472,7 @@ export function ProductTryOn({
         ...attemptRef.current,
         sessionStatus: pollPayload.status ?? "completed",
       };
+      setInFlightSession(false);
 
       lastCompletedPhotoRef.current = { fingerprint, productKey };
       setCurrentResultUrl(pollPayload.resultUrl ?? null);
@@ -433,7 +491,24 @@ export function ProductTryOn({
         tryOnCompletedTrackedRef.current = true;
       }
     } catch (err) {
-      clearActiveTryOnSessionId(brandSlug, productSlug);
+      if (err instanceof TryOnSessionTerminalError) {
+        attemptRef.current = {
+          ...attemptRef.current,
+          sessionStatus: err.status,
+        };
+        setInFlightSession(false);
+        clearActiveTryOnSessionId(brandSlug, productSlug);
+      } else {
+        const inFlight =
+          attemptRef.current.sessionStatus === "queued" ||
+          attemptRef.current.sessionStatus === "processing";
+
+        setInFlightSession(inFlight);
+        if (!inFlight) {
+          clearActiveTryOnSessionId(brandSlug, productSlug);
+        }
+      }
+
       const message = err instanceof Error ? err.message : "Something went wrong.";
       setError(message);
       setPhase("error");
@@ -451,6 +526,7 @@ export function ProductTryOn({
     currentResultUrl,
     mintClientRequestIdIfNeeded,
     personFile,
+    inFlightSession,
     phase,
     productKey,
     productSlug,
@@ -459,6 +535,7 @@ export function ProductTryOn({
   const canGenerate = canStartProductTryOnGeneration({
     phase,
     hasPersonFile: !!personFile,
+    sessionStatus: inFlightSession ? "queued" : null,
   });
 
   const busy = isProductTryOnBusy(phase);
