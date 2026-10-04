@@ -299,7 +299,131 @@ describe("development trusted client IP fallback", () => {
     const source = readFileSync(CLIENT_IP_MODULE, "utf8");
 
     assert.match(source, /process\.env\.NODE_ENV === "production"/);
-    assert.match(source, /if \(cloudflare\.ok \|\| process\.env\.NODE_ENV === "production"\) \{/);
+    assert.match(source, /if \(vercel\.ok && cloudflare\.ok\)/);
+    assert.match(source, /if \(vercel\.ok\)/);
+    assert.match(source, /if \(cloudflare\.ok\)/);
+    assert.match(
+      source,
+      /if \(process\.env\.NODE_ENV === "production"\) \{\s*\n\s*return TRUSTED_CLIENT_IP_UNAVAILABLE;/,
+    );
+    assert.doesNotMatch(source, /if \(cloudflare\.ok \|\| process\.env\.NODE_ENV === "production"\)/);
+  });
+});
+
+describe("production trusts the Vercel platform client header", () => {
+  it("uses a single x-vercel-forwarded-for address when Cloudflare is absent", () => {
+    const result = resolveInProduction({
+      "x-vercel-forwarded-for": "198.51.100.10",
+      "x-forwarded-for": "1.2.3.4",
+      "x-real-ip": "203.0.113.5",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.ok && result.ip, "198.51.100.10");
+  });
+
+  it("accepts IPv6 from x-vercel-forwarded-for", () => {
+    const result = resolveInProduction({ "x-vercel-forwarded-for": "2001:db8::1" });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.ok && result.ip, "2001:db8::1");
+  });
+
+  it("trims whitespace around the Vercel header value", () => {
+    const result = resolveInProduction({ "x-vercel-forwarded-for": " 198.51.100.10 " });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.ok && result.ip, "198.51.100.10");
+  });
+
+  it("reports a blank Vercel header as unavailable", () => {
+    assert.equal(resolveInProduction({ "x-vercel-forwarded-for": "   " }).ok, false);
+  });
+
+  it("reports a malformed Vercel header as unavailable and does not fall through", () => {
+    assert.equal(
+      resolveInProduction({
+        "x-vercel-forwarded-for": "attacker.example",
+        "x-forwarded-for": "198.51.100.10",
+        "x-real-ip": "203.0.113.5",
+      }).ok,
+      false,
+    );
+  });
+
+  it("reports a comma-separated Vercel header as unavailable", () => {
+    assert.equal(
+      resolveInProduction({
+        "x-vercel-forwarded-for": "198.51.100.10, 203.0.113.5",
+        "x-forwarded-for": "198.51.100.10",
+      }).ok,
+      false,
+    );
+  });
+
+  it("fails closed when both platform headers are valid addresses", () => {
+    const result = resolveInProduction({
+      "cf-connecting-ip": "198.51.100.10",
+      "x-vercel-forwarded-for": "203.0.113.5",
+    });
+
+    assert.deepEqual(result, { ok: false });
+  });
+
+  it("keeps a valid Cloudflare address when the Vercel header is not a single address", () => {
+    const result = resolveInProduction({
+      "cf-connecting-ip": "198.51.100.10",
+      "x-vercel-forwarded-for": "203.0.113.5, 198.51.100.10",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.ok && result.ip, "198.51.100.10");
+  });
+
+  it("cannot be rotated by varying X-Forwarded-For beside a stable Vercel address", () => {
+    const outcomes = new Set(
+      Array.from({ length: 25 }, (_, index) =>
+        JSON.stringify(
+          resolveInProduction({
+            "x-vercel-forwarded-for": "198.51.100.10",
+            "x-forwarded-for": `203.0.113.${index + 1}`,
+          }),
+        ),
+      ),
+    );
+
+    assert.equal(outcomes.size, 1);
+    assert.equal([...outcomes][0], JSON.stringify({ ok: true, ip: "198.51.100.10" }));
+  });
+
+  it("uses the Vercel header outside production before the development fallback", () => {
+    const result = resolveInDevelopment({
+      "x-vercel-forwarded-for": "198.51.100.10",
+      "x-forwarded-for": "1.2.3.4",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.ok && result.ip, "198.51.100.10");
+  });
+
+  it("fails closed outside production when both platform headers are valid", () => {
+    assert.deepEqual(
+      resolveInDevelopment({
+        "cf-connecting-ip": "198.51.100.10",
+        "x-vercel-forwarded-for": "203.0.113.5",
+        "x-forwarded-for": "1.2.3.4",
+      }),
+      { ok: false },
+    );
+  });
+
+  it("records the Vercel header beside the Render and Cloudflare assumption", () => {
+    const source = readFileSync(CLIENT_IP_MODULE, "utf8");
+    const doc = source.slice(0, source.indexOf("const CLOUDFLARE_CLIENT_IP_HEADER"));
+
+    assert.match(doc, /x-vercel-forwarded-for/);
+    assert.match(doc, /Vercel does not send `CF-Connecting-IP`/);
+    assert.match(source, /const VERCEL_CLIENT_IP_HEADER = "x-vercel-forwarded-for";/);
   });
 });
 

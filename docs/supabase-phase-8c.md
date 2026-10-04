@@ -10,7 +10,8 @@ deployed and its Supabase connectivity is proven; the Inngest staging sync is pe
 **Hosting decision (Phase 8C.4C):** the first production/staging target is a **Render Web Service**,
 chosen because `/api/demo/try-on` multipart requests can exceed Vercel's 4.5 MB function body limit.
 Render fronts every public web service with **Cloudflare**, which is why `CF-Connecting-IP` — not
-`X-Forwarded-For` — is the trusted client address for IP rate limiting (section 21).
+`X-Forwarded-For` — is the trusted client address on Render (section 21). Vercel traffic trusts
+`x-vercel-forwarded-for` instead; see the section 21 addendum.
 
 | Phase | Scope | Status | Commits |
 |---|---|---|---|
@@ -1757,6 +1758,30 @@ recorded in a comment at the resolver and asserted by tests. `CF-Connecting-IP` 
 behind an arbitrary proxy, and the source comment says so explicitly rather than making a generic
 claim. Moving off Render, or Render moving off Cloudflare, invalidates the model and must force a
 review before IP-scoped limits are relied on again.
+
+### Addendum — Vercel `x-vercel-forwarded-for`
+
+The production row in the table above is superseded for hosts that are not Render. Vercel does not
+send `CF-Connecting-IP`. It sets `x-vercel-forwarded-for` to the client address calculated by its
+proxy and overwrites a caller-supplied value of that header. `X-Forwarded-For` and `X-Real-IP`
+stay untrusted in production: Cloudflare appends to `X-Forwarded-For` on Render, and those generic
+headers are not platform-owned on every host.
+
+`resolveTrustedClientIp` now accepts exactly one valid platform header:
+
+| Platform headers that parse as a single address | Production result |
+|---|---|
+| `x-vercel-forwarded-for` only | that address |
+| `CF-Connecting-IP` only | that address |
+| both | `{ ok: false }` → **503** |
+| neither (missing, blank, malformed, or a comma-separated list) | `{ ok: false }` → **503** |
+
+A second valid header fails closed because each platform overwrites only its own header, so the
+other value was supplied by the caller. The limit is still evaluated once an address is trusted.
+Missing Upstash credentials in production still return `unavailable` after that check; this
+addendum does not add a memory limiter, change thresholds, or change deployment configuration.
+Outside production, the previous `X-Forwarded-For` / `X-Real-IP` / `"unknown"` fallback remains
+only when neither platform header is valid.
 
 ### Files changed
 
