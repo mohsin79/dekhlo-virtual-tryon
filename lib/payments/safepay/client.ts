@@ -67,6 +67,17 @@ function readPassportToken(payload: unknown): string | null {
   return typeof token === "string" && token.trim() ? token.trim() : null;
 }
 
+function readMerchantApiKey(client: unknown): string | null {
+  if (typeof client === "string" && client.trim()) {
+    return client;
+  }
+
+  const record = readRecord(client);
+  const apiKey = record?.api_key;
+
+  return typeof apiKey === "string" && apiKey.trim() ? apiKey : null;
+}
+
 function readMoney(value: unknown): { currency: string; amount: number } | null {
   const record = readRecord(value);
 
@@ -88,10 +99,11 @@ export function interpretTrackerPayload(
 ): PaymentLookup {
   const root = readRecord(payload);
   const data = readRecord(root?.data) ?? root;
-  const tracker = readRecord(data?.tracker);
+  // Session setup nests the tracker. The reporter returns the tracker fields on data itself.
+  const tracker = readRecord(data?.tracker) ?? data;
   const token = typeof tracker?.token === "string" ? tracker.token : requestedTracker;
   const state = typeof tracker?.state === "string" ? tracker.state : "";
-  const client = typeof tracker?.client === "string" ? tracker.client : null;
+  const client = readMerchantApiKey(tracker?.client);
 
   if (
     expectedMerchantApiKey &&

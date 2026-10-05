@@ -44,16 +44,30 @@ export function parseSafepayWebhook(rawBody: string): ParsedSafepayWebhook | nul
     data && typeof data === "object" && !Array.isArray(data)
       ? (data as Record<string, unknown>)
       : null;
+  const notification =
+    body.notification && typeof body.notification === "object" && !Array.isArray(body.notification)
+      ? (body.notification as Record<string, unknown>)
+      : null;
+  const charge =
+    dataRecord?.charge && typeof dataRecord.charge === "object" && !Array.isArray(dataRecord.charge)
+      ? (dataRecord.charge as Record<string, unknown>)
+      : null;
 
   const tracker =
     readTracker(body.tracker) ??
-    (dataRecord ? readTracker(dataRecord.tracker) ?? readTracker(dataRecord.token) : null);
+    (notification ? readTracker(notification.tracker) : null) ??
+    (dataRecord ? readTracker(dataRecord.tracker) ?? readTracker(dataRecord.token) : null) ??
+    (charge ? readTracker(charge.tracker) : null);
 
   return { eventType, tracker };
 }
 
-const ACTIONABLE_EVENTS = new Set(["payment.succeeded", "payment.failed"]);
-
 export function isActionableSafepayEvent(eventType: string | null): boolean {
-  return eventType === null || ACTIONABLE_EVENTS.has(eventType);
+  if (eventType === null) {
+    return true;
+  }
+
+  // Express Checkout docs use payment.succeeded. The merchant webhook envelope
+  // uses payment:created / payment:succeeded (getsafepay/safepay-dotnet).
+  return eventType.startsWith("payment.") || eventType.startsWith("payment:");
 }

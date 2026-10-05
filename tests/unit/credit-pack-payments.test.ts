@@ -11,6 +11,10 @@ import {
   SafepayRequestError,
 } from "@/lib/payments/safepay/client";
 import { handleSafepayWebhook } from "@/lib/payments/safepay/handle-webhook";
+import {
+  isActionableSafepayEvent,
+  parseSafepayWebhook,
+} from "@/lib/payments/safepay/parse-webhook";
 import { signSafepayWebhookBody } from "@/lib/payments/safepay/signature";
 import type { CreditPackOrder, GrantCredits, PaymentLookup } from "@/lib/payments/types";
 
@@ -482,6 +486,67 @@ describe("payment failure paths", () => {
     assert.equal(ledger.totalCredits(), 25);
   });
 
+  it("grants from the reporter lookup when the merchant webhook only names the tracker", async () => {
+    const ledger = createLedger();
+    let stored = pendingOrder();
+    const raw = JSON.stringify({
+      token: "notif_1",
+      client_id: "sec_public",
+      type: "payment:created",
+      notification: {
+        tracker: TRACKER,
+        state: "PAID",
+        amount: "2500.00",
+        currency: "PKR",
+        metadata: { order_id: ORDER_ID },
+      },
+    });
+    const parsed = parseSafepayWebhook(raw);
+
+    assert.equal(parsed?.eventType, "payment:created");
+    assert.equal(parsed?.tracker, TRACKER);
+    assert.equal(isActionableSafepayEvent(parsed?.eventType ?? null), true);
+
+    const result = await handleSafepayWebhook({
+      rawBody: raw,
+      signatureHeader: signSafepayWebhookBody(raw, SECRET),
+      webhookSecret: SECRET,
+      findOrderByTracker: async (tracker) => {
+        assert.equal(tracker, TRACKER);
+        return stored;
+      },
+      lookupPayment: async () =>
+        interpretTrackerPayload(
+          {
+            ok: true,
+            data: {
+              token: TRACKER,
+              state: "TRACKER_ENDED",
+              client: { api_key: "sec_public", name: "Dekhlo", email: "pay@example.com" },
+              purchase_totals: { quote_amount: { currency: "PKR", amount: 250000 } },
+              charge: { tracker: TRACKER },
+            },
+          },
+          TRACKER,
+          "sec_public",
+        ),
+      grantCredits: async (order) => {
+        assert.equal(order.credits, 25);
+        assert.equal(order.amountPaisa, 250_000);
+        return ledger.grantCredits(order);
+      },
+      saveOrder: async (order) => {
+        stored = order;
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.granted, true);
+    assert.equal(stored.status, "paid");
+    assert.equal(ledger.calls(), 1);
+    assert.equal(ledger.totalCredits(), 25);
+  });
+
   it("returns 500 and does not grant when tracker verification fails", async () => {
     const ledger = createLedger();
     const raw = webhookBody("payment.succeeded", true);
@@ -639,6 +704,124 @@ describe("Safepay checkout client", () => {
     if (otherMerchant.status === "failed") {
       assert.equal(otherMerchant.failureCode, "merchant_mismatch");
     }
+  });
+
+  it("reads the flat reporter payload as paid paisa when client.api_key matches", async () => {
+    const flatReporter = {
+      ok: true,
+      data: {
+        token: TRACKER,
+        state: "TRACKER_ENDED",
+        client: {
+          api_key: "sec_public",
+          name: "Dekhlo",
+          email: "merchant@example.com",
+        },
+        purchase_totals: {
+          quote_amount: { currency: "PKR", amount: 250000 },
+        },
+        charge: { tracker: TRACKER },
+      },
+    };
+    const paid = interpretTrackerPayload(flatReporter, TRACKER, "sec_public");
+    const mismatch = interpretTrackerPayload(
+      {
+        ok: true,
+        data: {
+          ...flatReporter.data,
+          client: { api_key: "sec_other", name: "Other", email: "other@example.com" },
+        },
+      },
+      TRACKER,
+      "sec_public",
+    );
+    const fromBaseAmount = interpretTrackerPayload(
+      {
+        ok: true,
+        data: {
+          token: TRACKER,
+          state: "TRACKER_ENDED",
+          client: { api_key: "sec_public" },
+          purchase_totals: { base_amount: { currency: "PKR", amount: 250_000 } },
+        },
+      },
+      TRACKER,
+      "sec_public",
+    );
+
+    assert.deepEqual(paid, {
+      status: "paid",
+      tracker: TRACKER,
+      amountPaisa: 250_000,
+      currency: "PKR",
+    });
+    assert.equal(mismatch.status, "failed");
+    if (mismatch.status === "failed") {
+      assert.equal(mismatch.failureCode, "merchant_mismatch");
+    }
+    assert.deepEqual(fromBaseAmount, paid);
+
+    const fetchImpl: typeof fetch = async (input) => {
+      assert.match(String(input), /\/reporter\/api\/v1\/payments\//);
+      return new Response(JSON.stringify(flatReporter), { status: 200 });
+    };
+    const lookup = await createSafepayProvider(config, fetchImpl).lookupPayment(TRACKER);
+    assert.deepEqual(lookup, paid);
+
+    const ledger = createLedger();
+    let stored = pendingOrder();
+    const first = await settleCreditPackOrder(stored, lookup, {
+      grantCredits: ledger.grantCredits,
+      saveOrder: async (order) => {
+        stored = order;
+      },
+    });
+    const second = await settleCreditPackOrder(stored, lookup, {
+      grantCredits: ledger.grantCredits,
+      saveOrder: async (order) => {
+        stored = order;
+      },
+    });
+
+    assert.equal(first.granted, true);
+    assert.equal(first.order.status, "paid");
+    assert.equal(second.granted, false);
+    assert.equal(ledger.calls(), 1);
+    assert.equal(ledger.totalCredits(), 25);
+  });
+
+  it("rejects a rupee figure that does not match the pack price in paisa", async () => {
+    const ledger = createLedger();
+    let stored = pendingOrder();
+    const lookup = interpretTrackerPayload(
+      {
+        ok: true,
+        data: {
+          token: TRACKER,
+          state: "TRACKER_ENDED",
+          client: { api_key: "sec_public" },
+          purchase_totals: { quote_amount: { currency: "PKR", amount: 2500 } },
+        },
+      },
+      TRACKER,
+      "sec_public",
+    );
+
+    const result = await settleCreditPackOrder(stored, lookup, {
+      grantCredits: ledger.grantCredits,
+      saveOrder: async (order) => {
+        stored = order;
+      },
+    });
+
+    assert.equal(lookup.status, "paid");
+    if (lookup.status === "paid") {
+      assert.equal(lookup.amountPaisa, 2500);
+    }
+    assert.equal(result.granted, false);
+    assert.equal(stored.status, "failed");
+    assert.equal(stored.failureCode, "amount_mismatch");
+    assert.equal(ledger.calls(), 0);
   });
 
   it("requires an explicit sandbox or production environment", () => {
