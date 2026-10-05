@@ -1,16 +1,15 @@
-import { Button } from "@/components/ui/button";
+import { CreditPackCard } from "@/components/dashboard/credit-pack-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUserContext } from "@/lib/auth/get-user-context";
 import { toCreditBalanceSnapshot } from "@/lib/credits/balance";
 import { canPurchaseCredits, canViewCredits } from "@/lib/credits/permissions";
 import { formatCreditTransactionType } from "@/lib/credits/transaction-labels";
 import {
-  CREDIT_PACK_PRICE_NOTE,
   CREDIT_PACKS,
+  CREDIT_PACKS_VOLUME_NOTE,
   formatPkrFromPaisa,
   getCreditPack,
 } from "@/lib/payments/credit-packs";
-import { startCreditPackCheckout } from "@/app/dashboard/credits/actions";
 import { createClient } from "@/lib/supabase/server";
 
 function formatDate(value: string): string {
@@ -202,30 +201,11 @@ export default async function CreditsPage({
       <section className="space-y-4">
         <div className="space-y-1">
           <h2 className="font-heading text-xl text-foreground">Credit packs</h2>
-          <p className="max-w-2xl text-sm text-muted-foreground">{CREDIT_PACK_PRICE_NOTE}</p>
+          <p className="max-w-2xl text-sm text-muted-foreground">{CREDIT_PACKS_VOLUME_NOTE}</p>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
           {CREDIT_PACKS.map((pack) => (
-            <Card key={pack.id} className="border-border/80 bg-surface/80">
-              <CardHeader>
-                <CardTitle className="font-heading text-xl">{pack.name}</CardTitle>
-                <CardDescription>
-                  {pack.credits} try-on credits · {formatPkrFromPaisa(pack.amountPaisa)}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {canBuy ? (
-                  <form action={startCreditPackCheckout}>
-                    <input type="hidden" name="packId" value={pack.id} />
-                    <Button type="submit">Pay with Safepay</Button>
-                  </form>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Owners and admins can purchase this pack.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+            <CreditPackCard key={pack.id} pack={pack} canBuy={canBuy} />
           ))}
         </div>
       </section>

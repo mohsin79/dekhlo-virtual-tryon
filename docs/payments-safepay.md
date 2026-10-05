@@ -4,7 +4,7 @@ Merchants buy one-time try-on credit packs in PKR. Pakistan-only. There is no su
 
 Credits are added only after Dekhlo confirms the payment with Safepay's API. The browser return URL is not proof of payment. A repeated webhook or a refreshed success page uses the existing `grant_brand_credits` RPC and the order's idempotency key, so the same purchase cannot add credits twice.
 
-Pack names, credit amounts, and PKR prices live in `lib/payments/credit-packs.ts`. **The prices in that file are placeholders**, not a live tariff. Change them before a real merchant is charged.
+Pack names, credit amounts, and PKR prices live in `lib/payments/credit-packs.ts`. Starter is 10 credits for Rs 2,000 (Rs 200 each). Growth is 25 credits for Rs 4,875 (Rs 195 each). Studio is 100 credits for Rs 19,000 (Rs 190 each). Stored amounts and Safepay charges are paisa, so Rs 2,000 is `200000`.
 
 ## What this follows
 
@@ -71,9 +71,9 @@ A production domain that is not behind Deployment Protection uses the bare path 
 
 1. Set the sandbox variables above and `NEXT_PUBLIC_SITE_URL` to the origin you will use (preview alias or `http://localhost:3000`).
 2. Sign in as a brand **owner** or **admin** and open **Dashboard → Credits**.
-3. Choose a pack. The button sends you to Safepay hosted checkout. Prices on the page are the placeholders in `lib/payments/credit-packs.ts`.
+3. Choose a pack. The button sends you to Safepay hosted checkout for that pack's price in `lib/payments/credit-packs.ts`.
 4. Pay with Safepay's sandbox dummy Visa card from their [dummy card article](https://safepay.helpscoutdocs.com/article/41-dummy-card-information): number `5200 0000 0000 1096`, expiry `03/28`, CVC `111`. Use any sandbox billing name and a Pakistan address. Do not use a real card. Complete the sandbox 3-D Secure emulator as a successful authentication ([testing article](https://safepay.helpscoutdocs.com/article/82-testing-the-latest-safepay-checkout-integration)).
-5. Safepay redirects to `/dashboard/credits/checkout/success/<orderId>`. That page calls `GET /reporter/api/v1/payments/{tracker}`. The sandbox reporter body is flat: `data.state`, `data.client.api_key`, and `data.purchase_totals.quote_amount.amount` in paisa (`250000` is PKR 2,500). Session setup still nests those fields under `data.tracker`, and `client` may be a string on that older shape. Both are accepted. Credits are granted only when the state is `TRACKER_ENDED`, the merchant API key matches `SAFEPAY_API_KEY`, and the paisa amount matches the pack. The webhook only supplies a tracker id (`notification.tracker` on the merchant envelope, or `data.tracker` / `data.token`). It does not grant from the webhook's own amount or state. The same reporter lookup decides.
+5. Safepay redirects to `/dashboard/credits/checkout/success/<orderId>`. That page calls `GET /reporter/api/v1/payments/{tracker}`. The sandbox reporter body is flat: `data.state`, `data.client.api_key`, and `data.purchase_totals.quote_amount.amount` in paisa (`200000` is PKR 2,000, the Starter pack). Session setup still nests those fields under `data.tracker`, and `client` may be a string on that older shape. Both are accepted. Credits are granted only when the state is `TRACKER_ENDED`, the merchant API key matches `SAFEPAY_API_KEY`, and the paisa amount matches the pack. The webhook only supplies a tracker id (`notification.tracker` on the merchant envelope, or `data.tracker` / `data.token`). It does not grant from the webhook's own amount or state. The same reporter lookup decides.
 6. The credits page balance increases once. Refreshing the success page, or delivering the webhook again, does not add the pack a second time.
 7. Cancel from the hosted page to land on `/dashboard/credits/checkout/cancel/<orderId>`. A cancelled or unfinished tracker does not add credits. If Safepay has already captured the payment, that page still grants them.
 

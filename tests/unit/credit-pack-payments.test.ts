@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { describe, it } from "node:test";
-import { CREDIT_PACK_PENDING_LIMIT, getCreditPack } from "@/lib/payments/credit-packs";
+import {
+  CREDIT_PACK_PENDING_LIMIT,
+  CREDIT_PACKS_VOLUME_NOTE,
+  creditPackPricing,
+  creditPackSavingsLabel,
+  formatPerTryOnPrice,
+  formatPkrFromPaisa,
+  getCreditPack,
+} from "@/lib/payments/credit-packs";
 import { createCreditPackCheckout, settleCreditPackOrder } from "@/lib/payments/orders";
 import { resolveSafepayConfig } from "@/lib/payments/safepay/config";
 import {
@@ -86,6 +94,59 @@ function webhookBody(eventType: string, success: boolean): string {
     },
   });
 }
+
+describe("credit pack tariff", () => {
+  it("keeps pack ids and prices a flat Rs 200 rate with discounts on larger packs", () => {
+    const starter = getCreditPack("starter");
+    const growth = getCreditPack("growth");
+    const studio = getCreditPack("studio");
+    assert.ok(starter);
+    assert.ok(growth);
+    assert.ok(studio);
+
+    assert.deepEqual(
+      [starter, growth, studio].map((pack) => ({
+        id: pack.id,
+        name: pack.name,
+        credits: pack.credits,
+        amountPaisa: pack.amountPaisa,
+      })),
+      [
+        { id: "starter", name: "Starter", credits: 10, amountPaisa: 200_000 },
+        { id: "growth", name: "Growth", credits: 25, amountPaisa: 487_500 },
+        { id: "studio", name: "Studio", credits: 100, amountPaisa: 1_900_000 },
+      ],
+    );
+    assert.equal(CREDIT_PACKS_VOLUME_NOTE, "Bigger packs cost less per try-on.");
+    assert.deepEqual(creditPackPricing(starter), {
+      perCreditPaisa: 20_000,
+      discountPercent: 0,
+      savingsPaisa: 0,
+    });
+    assert.deepEqual(creditPackPricing(growth), {
+      perCreditPaisa: 19_500,
+      discountPercent: 2.5,
+      savingsPaisa: 12_500,
+    });
+    assert.deepEqual(creditPackPricing(studio), {
+      perCreditPaisa: 19_000,
+      discountPercent: 5,
+      savingsPaisa: 100_000,
+    });
+    assert.equal(formatPerTryOnPrice(starter), `${formatPkrFromPaisa(20_000)} per try-on`);
+    assert.equal(formatPerTryOnPrice(growth), `${formatPkrFromPaisa(19_500)} per try-on`);
+    assert.equal(formatPerTryOnPrice(studio), `${formatPkrFromPaisa(19_000)} per try-on`);
+    assert.equal(creditPackSavingsLabel(starter), null);
+    assert.deepEqual(creditPackSavingsLabel(growth), {
+      amount: `Save ${formatPkrFromPaisa(12_500)}`,
+      percent: "2.5% off",
+    });
+    assert.deepEqual(creditPackSavingsLabel(studio), {
+      amount: `Save ${formatPkrFromPaisa(100_000)}`,
+      percent: "5% off",
+    });
+  });
+});
 
 describe("credit pack order creation", () => {
   it("stores a pending order and returns the hosted checkout URL without granting credits", async () => {
@@ -473,7 +534,7 @@ describe("payment failure paths", () => {
       grantCredits: async (order) => {
         assert.equal(order.brandId, BRAND_ID);
         assert.equal(order.packId, "starter");
-        assert.equal(order.credits, 25);
+        assert.equal(order.credits, 10);
         return ledger.grantCredits(order);
       },
       saveOrder: async (order) => {
@@ -483,7 +544,7 @@ describe("payment failure paths", () => {
 
     assert.equal(result.granted, true);
     assert.equal(stored.packId, "starter");
-    assert.equal(ledger.totalCredits(), 25);
+    assert.equal(ledger.totalCredits(), 10);
   });
 
   it("grants from the reporter lookup when the merchant webhook only names the tracker", async () => {
@@ -523,7 +584,7 @@ describe("payment failure paths", () => {
               token: TRACKER,
               state: "TRACKER_ENDED",
               client: { api_key: "sec_public", name: "Dekhlo", email: "pay@example.com" },
-              purchase_totals: { quote_amount: { currency: "PKR", amount: 250000 } },
+              purchase_totals: { quote_amount: { currency: "PKR", amount: 200000 } },
               charge: { tracker: TRACKER },
             },
           },
@@ -531,8 +592,8 @@ describe("payment failure paths", () => {
           "sec_public",
         ),
       grantCredits: async (order) => {
-        assert.equal(order.credits, 25);
-        assert.equal(order.amountPaisa, 250_000);
+        assert.equal(order.credits, 10);
+        assert.equal(order.amountPaisa, 200_000);
         return ledger.grantCredits(order);
       },
       saveOrder: async (order) => {
@@ -544,7 +605,7 @@ describe("payment failure paths", () => {
     assert.equal(result.granted, true);
     assert.equal(stored.status, "paid");
     assert.equal(ledger.calls(), 1);
-    assert.equal(ledger.totalCredits(), 25);
+    assert.equal(ledger.totalCredits(), 10);
   });
 
   it("returns 500 and does not grant when tracker verification fails", async () => {
@@ -594,7 +655,7 @@ describe("Safepay checkout client", () => {
           metadata: Record<string, unknown>;
         };
         assert.equal(body.currency, "PKR");
-        assert.equal(body.amount, 250_000);
+        assert.equal(body.amount, 200_000);
         assert.equal(body.intent, "CYBERSOURCE");
         assert.equal(body.mode, "payment");
         assert.equal(body.merchant_api_key, "sec_public");
@@ -718,7 +779,7 @@ describe("Safepay checkout client", () => {
           email: "merchant@example.com",
         },
         purchase_totals: {
-          quote_amount: { currency: "PKR", amount: 250000 },
+          quote_amount: { currency: "PKR", amount: 200000 },
         },
         charge: { tracker: TRACKER },
       },
@@ -742,7 +803,7 @@ describe("Safepay checkout client", () => {
           token: TRACKER,
           state: "TRACKER_ENDED",
           client: { api_key: "sec_public" },
-          purchase_totals: { base_amount: { currency: "PKR", amount: 250_000 } },
+          purchase_totals: { base_amount: { currency: "PKR", amount: 200_000 } },
         },
       },
       TRACKER,
@@ -752,7 +813,7 @@ describe("Safepay checkout client", () => {
     assert.deepEqual(paid, {
       status: "paid",
       tracker: TRACKER,
-      amountPaisa: 250_000,
+      amountPaisa: 200_000,
       currency: "PKR",
     });
     assert.equal(mismatch.status, "failed");
@@ -787,7 +848,7 @@ describe("Safepay checkout client", () => {
     assert.equal(first.order.status, "paid");
     assert.equal(second.granted, false);
     assert.equal(ledger.calls(), 1);
-    assert.equal(ledger.totalCredits(), 25);
+    assert.equal(ledger.totalCredits(), 10);
   });
 
   it("rejects a rupee figure that does not match the pack price in paisa", async () => {
@@ -800,7 +861,7 @@ describe("Safepay checkout client", () => {
           token: TRACKER,
           state: "TRACKER_ENDED",
           client: { api_key: "sec_public" },
-          purchase_totals: { quote_amount: { currency: "PKR", amount: 2500 } },
+          purchase_totals: { quote_amount: { currency: "PKR", amount: 2000 } },
         },
       },
       TRACKER,
@@ -816,7 +877,7 @@ describe("Safepay checkout client", () => {
 
     assert.equal(lookup.status, "paid");
     if (lookup.status === "paid") {
-      assert.equal(lookup.amountPaisa, 2500);
+      assert.equal(lookup.amountPaisa, 2000);
     }
     assert.equal(result.granted, false);
     assert.equal(stored.status, "failed");
