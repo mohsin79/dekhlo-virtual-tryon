@@ -27,6 +27,7 @@ export class GenerationNotStartedError extends Error {
 export async function redispatchQueuedGeneration(
   sessionId: string,
   status: TryOnSessionStatus | string | null | undefined,
+  headers?: HeadersInit,
 ): Promise<void> {
   if (!shouldRedispatchQueuedGeneration(status)) {
     return;
@@ -34,6 +35,7 @@ export async function redispatchQueuedGeneration(
 
   const response = await fetch(`/api/try-on/sessions/${sessionId}/generate`, {
     method: "POST",
+    headers,
   });
 
   // 409 means the session already moved on (completed, failed, or not queued).

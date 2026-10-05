@@ -29,12 +29,20 @@ Set every required value in `.env.local`. Do not commit `.env.local` or `.env.pr
 | `/` | Marketing |
 | `/demo` | Rate-limited two-image demo. Does not spend merchant credits. |
 | `/try/[brandSlug]/[productSlug]` | Public product try-on. Person photo only. |
+| `/embed/[brandSlug]/[productSlug]` | Same try-on, framed on a merchant product page. |
+| `/embed/preview` | Local stand-in for that product page. |
 | `/auth/*` | Merchant sign-in, sign-up, and password reset |
 | `/onboarding` | First brand for a new merchant |
 | `/dashboard` | Products, leads, and credits |
 | `/platform` | Platform admin credit operations |
 
 Email confirmation and password-reset links open `/auth/confirm` and wait for an explicit click before the token is used.
+
+## Merchant embed
+
+An active product has a public try-on link and an embed snippet on its dashboard card. Paste the snippet into the store's product page. Shoppers upload a photo in the frame; the session, credits, and generation stay on Dekhlo. Setup notes: [docs/merchant-embed.md](docs/merchant-embed.md).
+
+To try it locally, run `npm run dev` and open `/embed/preview?brand=YOUR-BRAND&product=YOUR-PRODUCT`.
 
 ## Tests
 

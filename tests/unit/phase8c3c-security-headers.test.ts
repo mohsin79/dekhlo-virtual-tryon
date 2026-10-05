@@ -334,7 +334,7 @@ describe("CSP cannot become permissive or leak configuration", () => {
   });
 });
 
-describe("framing policy is deliberately deferred", () => {
+describe("global headers still omit a blanket framing policy", () => {
   it("sets no X-Frame-Options header", () => {
     for (const headers of [production(), development()]) {
       assert.equal(headerValue(headers, "X-Frame-Options"), undefined);
@@ -350,9 +350,9 @@ describe("framing policy is deliberately deferred", () => {
   });
 
   it("guards against a global restrictive framing rule being reintroduced", () => {
-    // The merchant try-on surface may later be embedded on merchant websites, so a blanket
-    // DENY/SAMEORIGIN/'none' rule here would become a product regression. The framing policy
-    // is designed together with the embedding model instead.
+    // Path-specific framing lives in lib/embed/framing.ts and proxy.ts. A blanket
+    // DENY here would block the merchant embed, and a blanket allow would frame the
+    // dashboard. This global header set stays out of that decision.
     for (const file of [HEADERS_MODULE, NEXT_CONFIG]) {
       const source = readFileSync(file, "utf8");
       const active = source

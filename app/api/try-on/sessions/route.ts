@@ -23,8 +23,12 @@ import {
 import { createPersonUploadUrl, removePersonPhoto } from "@/lib/try-on/sessions/storage";
 import { buildPersonStoragePath } from "@/lib/try-on/sessions/paths";
 import {
+  EMBED_TRY_ON_HEADER,
+  shouldRevealSessionAccessToken,
+} from "@/lib/embed/session-presentation";
+import {
   generateSessionAccessToken,
-  readSessionAccessToken,
+  readPresentedSessionAccessToken,
   setSessionAccessCookie,
   tokensMatch,
 } from "@/lib/try-on/sessions/tokens";
@@ -88,7 +92,7 @@ export async function POST(request: Request) {
       return { brandId: product.brandId, productId: product.productId };
     },
     getSessionByClientRequestId,
-    readSessionAccessToken,
+    readSessionAccessToken: (sessionId) => readPresentedSessionAccessToken(sessionId, request),
     tokensMatch,
     createPersonUploadUrl,
     insertTryOnSession,
@@ -98,6 +102,11 @@ export async function POST(request: Request) {
     generateSessionAccessToken,
     buildPersonStoragePath,
     computeInitialSessionExpiry,
+    revealSessionAccessToken: shouldRevealSessionAccessToken({
+      referer: request.headers.get("referer"),
+      host: request.headers.get("host"),
+      embedRequested: request.headers.get(EMBED_TRY_ON_HEADER) === "1",
+    }),
   });
 
   if ("error" in result) {

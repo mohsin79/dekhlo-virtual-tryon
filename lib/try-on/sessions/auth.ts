@@ -1,7 +1,7 @@
 import "server-only";
 
 import {
-  readSessionAccessToken,
+  readPresentedSessionAccessToken,
   tokensMatch,
 } from "@/lib/try-on/sessions/tokens";
 import {
@@ -17,8 +17,9 @@ export type AuthorizedSession = {
 
 export async function authorizeSessionAccess(
   sessionId: string,
+  request?: Request,
 ): Promise<{ ok: true; value: AuthorizedSession } | { ok: false; status: number; message: string }> {
-  const token = await readSessionAccessToken(sessionId);
+  const token = await readPresentedSessionAccessToken(sessionId, request);
 
   if (!token) {
     return { ok: false, status: 401, message: "Session access is required." };

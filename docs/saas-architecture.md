@@ -1034,7 +1034,8 @@ Each phase ends with: TypeScript, ESLint, tests (when present), production build
 
 ### Phase 9 — Billing & polish (future)
 
-- Stripe, custom domains, embed SDK
+- Stripe and custom domains remain future work
+- Merchant embed: [`docs/merchant-embed.md`](merchant-embed.md). A store frames `/embed/[brandSlug]/[productSlug]`. The session cookie stays HttpOnly and SameSite=Lax. The frame presents the same access token in a header when the browser will not send that cookie.
 - Extended platform admin console
 
 ---
@@ -1097,6 +1098,7 @@ app/api/health/supabase/route.ts      → Phase 1
 | Credit cost immutability | Stored on session as `credit_cost`; consume/release never recalculate |
 | Session vs credit idempotency | `client_request_id` (create) vs server keys `session:{id}:reserve\|consume\|release` |
 | Anonymous session access | Session UUID + session-access token required (IDOR protection) |
+| Merchant embed | Same-origin iframe at `/embed/[brandSlug]/[productSlug]`. Cookie policy unchanged. Header credential only when the cookie is absent, and only echoed when the request Referer is that embed document. See `docs/merchant-embed.md`. |
 | Credit RPC grants | No general-purpose grant to all authenticated merchants (§7.5) |
 | Admin credit ops | **`admin_grant` / `admin_revoke`** — Phase 8 only, after `audit_logs` + `platform_role` |
 | Phase 5 credit scope | `grant_brand_credits` only — no admin RPCs, no `audit_logs` dependency |

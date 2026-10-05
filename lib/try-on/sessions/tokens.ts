@@ -1,6 +1,10 @@
 import "server-only";
 
 import { cookies } from "next/headers";
+import {
+  selectPresentedSessionToken,
+  SESSION_ACCESS_HEADER,
+} from "@/lib/embed/session-presentation";
 import { SESSION_ACCESS_COOKIE_PREFIX } from "@/lib/try-on/sessions/constants";
 import {
   generateDemoSessionId,
@@ -41,4 +45,19 @@ export async function setSessionAccessCookie(
 export async function readSessionAccessToken(sessionId: string): Promise<string | null> {
   const cookieStore = await cookies();
   return cookieStore.get(sessionAccessCookieName(sessionId))?.value ?? null;
+}
+
+/**
+ * Cookie first, then the embed header. The cookie attributes are unchanged:
+ * httpOnly, Secure in production, SameSite=Lax. The header exists so a
+ * cross-site iframe can present the same secret when the browser will not
+ * store or send that cookie.
+ */
+export async function readPresentedSessionAccessToken(
+  sessionId: string,
+  request?: Request,
+): Promise<string | null> {
+  const cookieToken = await readSessionAccessToken(sessionId);
+  const headerToken = request?.headers.get(SESSION_ACCESS_HEADER) ?? null;
+  return selectPresentedSessionToken({ cookieToken, headerToken });
 }

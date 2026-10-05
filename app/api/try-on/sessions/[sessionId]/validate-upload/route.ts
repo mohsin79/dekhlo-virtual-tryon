@@ -27,8 +27,8 @@ type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
 
-export async function POST(_request: Request, context: RouteContext) {
-  if (!assertSameOrigin(_request)) {
+export async function POST(request: Request, context: RouteContext) {
+  if (!assertSameOrigin(request)) {
     return genericErrorResponse("Invalid request origin.", 403);
   }
 
@@ -38,7 +38,7 @@ export async function POST(_request: Request, context: RouteContext) {
     return genericErrorResponse(TRY_ON_SESSION_NOT_FOUND_MESSAGE, 404);
   }
 
-  const auth = await authorizeSessionAccess(sessionId);
+  const auth = await authorizeSessionAccess(sessionId, request);
 
   if (!auth.ok) {
     return genericErrorResponse(auth.message, auth.status);
