@@ -1,4 +1,5 @@
 import { creditPackIdempotencyKey, getCreditPack } from "@/lib/payments/credit-packs";
+import { SafepayRequestError } from "@/lib/payments/safepay/client";
 import type {
   CreditPackOrder,
   GrantCredits,
@@ -86,7 +87,20 @@ export async function createCreditPackCheckout(input: {
       successUrl: input.successUrl,
       cancelUrl: input.cancelUrl,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof SafepayRequestError) {
+      console.error("[payments] checkout_provider_failed", {
+        orderId: order.id,
+        status: error.status,
+        body: error.bodySnippet,
+      });
+    } else {
+      console.error("[payments] checkout_provider_failed", {
+        orderId: order.id,
+        status: null,
+      });
+    }
+
     await input.markFailed(order.id, "checkout_failed");
     throw new CreditPackCheckoutError("provider_unavailable");
   }

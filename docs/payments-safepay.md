@@ -20,6 +20,8 @@ Merchant hosted checkout, not the Raast aggregator API:
 
 The hosted page offers the methods enabled on the Safepay account (cards, wallets, and Raast when Safepay has turned them on). Dekhlo does not collect card numbers.
 
+The payment-session `metadata` sent to Safepay is only `order_id`, the `credit_pack_orders` id. Safepay's sandbox rejects any other metadata key (a 500 with `unsupported meta key`). The brand and the pack stay on that order row. The webhook and the success or cancel page load the row by tracker or order id and do not read `brand_id` or `pack_id` back from Safepay. If Safepay refuses to open checkout, the server log records the HTTP status and a short redacted response snippet. Secrets are not written to that log.
+
 ## Environment variables
 
 All of these are server-only. Put them in the host's environment (Vercel project env, or `.env.local` for local work). Do not prefix them with `NEXT_PUBLIC_`.

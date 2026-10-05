@@ -3,14 +3,35 @@ import type { CreatedCheckout, PaymentLookup, PaymentProvider } from "@/lib/paym
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
+const ERROR_BODY_SNIPPET_LIMIT = 180;
+
 export class SafepayRequestError extends Error {
   readonly status: number;
+  readonly bodySnippet: string;
 
-  constructor(status: number) {
+  constructor(status: number, bodySnippet = "") {
     super("Safepay request failed.");
     this.name = "SafepayRequestError";
     this.status = status;
+    this.bodySnippet = bodySnippet;
   }
+}
+
+/** Short error text safe to print. Drops API keys, hex secrets, and token fields. */
+export function redactSafepayBodySnippet(body: string): string {
+  let snippet = body.replace(/\s+/g, " ").trim();
+  snippet = snippet.replace(/sec_[A-Za-z0-9-]{8,}/g, "[redacted]");
+  snippet = snippet.replace(/\b[a-f0-9]{32,}\b/gi, "[redacted]");
+  snippet = snippet.replace(
+    /"(merchant_api_key|api_key|secret|token|tbt|authorization|password|webhook_secret)"\s*:\s*"[^"]*"/gi,
+    '"$1":"[redacted]"',
+  );
+
+  if (snippet.length > ERROR_BODY_SNIPPET_LIMIT) {
+    return `${snippet.slice(0, ERROR_BODY_SNIPPET_LIMIT)}…`;
+  }
+
+  return snippet;
 }
 
 type FetchLike = typeof fetch;
@@ -162,7 +183,7 @@ async function safepayFetch(
     const text = await response.text();
 
     if (!response.ok) {
-      throw new SafepayRequestError(response.status);
+      throw new SafepayRequestError(response.status, redactSafepayBodySnippet(text));
     }
 
     if (!text) {
@@ -198,8 +219,6 @@ export function createSafepayProvider(
           include_fees: false,
           metadata: {
             order_id: input.order.id,
-            brand_id: input.order.brandId,
-            pack_id: input.order.packId,
           },
         }),
       });

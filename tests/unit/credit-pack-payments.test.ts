@@ -4,7 +4,12 @@ import { describe, it } from "node:test";
 import { CREDIT_PACK_PENDING_LIMIT, getCreditPack } from "@/lib/payments/credit-packs";
 import { createCreditPackCheckout, settleCreditPackOrder } from "@/lib/payments/orders";
 import { resolveSafepayConfig } from "@/lib/payments/safepay/config";
-import { createSafepayProvider, interpretTrackerPayload } from "@/lib/payments/safepay/client";
+import {
+  createSafepayProvider,
+  interpretTrackerPayload,
+  redactSafepayBodySnippet,
+  SafepayRequestError,
+} from "@/lib/payments/safepay/client";
 import { handleSafepayWebhook } from "@/lib/payments/safepay/handle-webhook";
 import { signSafepayWebhookBody } from "@/lib/payments/safepay/signature";
 import type { CreditPackOrder, GrantCredits, PaymentLookup } from "@/lib/payments/types";
@@ -185,6 +190,56 @@ describe("credit pack order creation", () => {
     );
 
     assert.deepEqual(failures, ["checkout_failed"]);
+  });
+
+  it("logs the Safepay status and a redacted body before provider_unavailable", async () => {
+    const failures: string[] = [];
+    const logged: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    const body = redactSafepayBodySnippet(
+      '{"data":null,"status":{"errors":["unsupported meta key brand_id"],"message":"fail"},"merchant_api_key":"sec_faed47eb-0044-4968-b7e9-2fb7d7853eb9"}',
+    );
+
+    try {
+      await assert.rejects(
+        () =>
+          createCreditPackCheckout({
+            orderId: ORDER_ID,
+            brandId: BRAND_ID,
+            packId: "starter",
+            provider: "safepay",
+            providerEnvironment: "sandbox",
+            pendingCount: 0,
+            pendingLimit: CREDIT_PACK_PENDING_LIMIT,
+            successUrl: "https://dekhlo.example/success",
+            cancelUrl: "https://dekhlo.example/cancel",
+            insertOrder: async () => undefined,
+            attachTracker: async () => undefined,
+            markFailed: async (_orderId, code) => {
+              failures.push(code);
+            },
+            createCheckout: async () => {
+              throw new SafepayRequestError(500, body);
+            },
+          }),
+        /provider_unavailable/,
+      );
+    } finally {
+      console.error = original;
+    }
+
+    assert.deepEqual(failures, ["checkout_failed"]);
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0]?.[0], "[payments] checkout_provider_failed");
+    const detail = logged[0]?.[1] as { orderId: string; status: number; body: string };
+    assert.equal(detail.orderId, ORDER_ID);
+    assert.equal(detail.status, 500);
+    assert.match(detail.body, /unsupported meta key brand_id/);
+    assert.equal(detail.body.includes("sec_"), false);
+    assert.equal(JSON.stringify(logged).includes("sec_faed"), false);
   });
 });
 
@@ -389,6 +444,44 @@ describe("payment failure paths", () => {
     assert.equal(stored.status, "paid");
   });
 
+  it("grants the stored pack when webhook metadata names a different brand or pack", async () => {
+    const ledger = createLedger();
+    let stored = pendingOrder();
+    const raw = JSON.stringify({
+      type: "payment.succeeded",
+      data: {
+        tracker: TRACKER,
+        success: true,
+        metadata: {
+          order_id: ORDER_ID,
+          brand_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          pack_id: "studio",
+        },
+      },
+    });
+
+    const result = await handleSafepayWebhook({
+      rawBody: raw,
+      signatureHeader: signSafepayWebhookBody(raw, SECRET),
+      webhookSecret: SECRET,
+      findOrderByTracker: async () => stored,
+      lookupPayment: async () => paidLookup(),
+      grantCredits: async (order) => {
+        assert.equal(order.brandId, BRAND_ID);
+        assert.equal(order.packId, "starter");
+        assert.equal(order.credits, 25);
+        return ledger.grantCredits(order);
+      },
+      saveOrder: async (order) => {
+        stored = order;
+      },
+    });
+
+    assert.equal(result.granted, true);
+    assert.equal(stored.packId, "starter");
+    assert.equal(ledger.totalCredits(), 25);
+  });
+
   it("returns 500 and does not grant when tracker verification fails", async () => {
     const ledger = createLedger();
     const raw = webhookBody("payment.succeeded", true);
@@ -433,12 +526,14 @@ describe("Safepay checkout client", () => {
           intent: string;
           mode: string;
           merchant_api_key: string;
+          metadata: Record<string, unknown>;
         };
         assert.equal(body.currency, "PKR");
         assert.equal(body.amount, 250_000);
         assert.equal(body.intent, "CYBERSOURCE");
         assert.equal(body.mode, "payment");
         assert.equal(body.merchant_api_key, "sec_public");
+        assert.deepEqual(body.metadata, { order_id: ORDER_ID });
         const headers = new Headers(init?.headers);
         assert.equal(headers.get("x-sfpy-merchant-secret"), "sec_secret");
 
@@ -469,6 +564,34 @@ describe("Safepay checkout client", () => {
     assert.equal(checkoutUrl.searchParams.get("tracker"), TRACKER);
     assert.equal(checkoutUrl.searchParams.get("tbt"), "passport-token");
     assert.equal(calls.length, 2);
+  });
+
+  it("keeps a Safepay 500 status and a redacted body on the request error", async () => {
+    const rawBody = JSON.stringify({
+      data: null,
+      status: { errors: ["unsupported meta key brand_id"], message: "fail" },
+      merchant_api_key: "sec_faed47eb-0044-4968-b7e9-2fb7d7853eb9",
+    });
+    const fetchImpl: typeof fetch = async () => new Response(rawBody, { status: 500 });
+    const provider = createSafepayProvider(config, fetchImpl);
+
+    await assert.rejects(
+      () =>
+        provider.createCheckout({
+          order: pendingOrder({ providerTracker: null }),
+          successUrl: "https://dekhlo.example/success",
+          cancelUrl: "https://dekhlo.example/cancel",
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof SafepayRequestError);
+        assert.equal(error.status, 500);
+        assert.match(error.bodySnippet, /unsupported meta key brand_id/);
+        assert.equal(error.bodySnippet.includes("sec_faed"), false);
+        assert.equal(error.bodySnippet.includes("2fb7d7853eb9"), false);
+        assert.equal(error.message.includes("sec_faed"), false);
+        return true;
+      },
+    );
   });
 
   it("reads TRACKER_ENDED as a paid PKR amount and leaves in-progress trackers pending", () => {
