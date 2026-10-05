@@ -1032,9 +1032,10 @@ Each phase ends with: TypeScript, ESLint, tests (when present), production build
 - Sentry, PostHog
 - Security review of RLS, storage, credit RPCs, and admin operations
 
-### Phase 9 — Billing & polish (future)
+### Phase 9 — Billing & polish
 
-- Stripe and custom domains remain future work
+- Merchant credit packs are one-time PKR purchases through Safepay hosted checkout. Stripe is not used. See [`docs/payments-safepay.md`](payments-safepay.md).
+- Custom domains remain future work.
 - Merchant embed: [`docs/merchant-embed.md`](merchant-embed.md). A store frames `/embed/[brandSlug]/[productSlug]`. The session cookie stays HttpOnly and SameSite=Lax. The frame presents the same access token in a header when the browser will not send that cookie.
 - Extended platform admin console
 

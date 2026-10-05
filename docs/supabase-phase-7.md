@@ -323,7 +323,7 @@ OpenAI is not called in automated tests. Full merchant async behavior is validat
 ## Deferred (Phase 8+)
 
 - `platform_role`, `audit_logs`, admin grant/revoke
-- Leads, Sentry, PostHog, Resend, Stripe billing
+- Leads, Sentry, PostHog, Resend. Billing is Safepay credit packs (`docs/payments-safepay.md`), not Stripe
 - WebSockets / Inngest Realtime for try-on status
 - Hard deletion of historical session rows
 

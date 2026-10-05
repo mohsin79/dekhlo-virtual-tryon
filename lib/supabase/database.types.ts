@@ -207,6 +207,84 @@ export type Database = {
         }
         Relationships: []
       }
+      credit_pack_orders: {
+        Row: {
+          amount_paisa: number
+          brand_id: string
+          created_at: string
+          created_by: string | null
+          credit_idempotency_key: string
+          credits: number
+          currency: string
+          failure_code: string | null
+          granted_transaction_id: string | null
+          id: string
+          metadata: Json
+          pack_id: string
+          paid_at: string | null
+          provider: string
+          provider_environment: string
+          provider_tracker: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount_paisa: number
+          brand_id: string
+          created_at?: string
+          created_by?: string | null
+          credit_idempotency_key: string
+          credits: number
+          currency?: string
+          failure_code?: string | null
+          granted_transaction_id?: string | null
+          id?: string
+          metadata?: Json
+          pack_id: string
+          paid_at?: string | null
+          provider: string
+          provider_environment: string
+          provider_tracker?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount_paisa?: number
+          brand_id?: string
+          created_at?: string
+          created_by?: string | null
+          credit_idempotency_key?: string
+          credits?: number
+          currency?: string
+          failure_code?: string | null
+          granted_transaction_id?: string | null
+          id?: string
+          metadata?: Json
+          pack_id?: string
+          paid_at?: string | null
+          provider?: string
+          provider_environment?: string
+          provider_tracker?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credit_pack_orders_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credit_pack_orders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       credit_transactions: {
         Row: {
           amount: number

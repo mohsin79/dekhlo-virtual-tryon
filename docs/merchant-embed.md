@@ -2,7 +2,7 @@
 
 A store can run the same product try-on on its own product page. The shopper stays on that page. The person photo, catalog garment, session, credits, and generation stay on Dekhlo.
 
-Phase 9 in `docs/saas-architecture.md` names an embed SDK next to Stripe and a custom domain. Those two are not part of this embed. Phase 8C left framing unset until this model existed: only the embed document may be framed, and the dashboard, auth, and standalone try-on page send `X-Frame-Options: DENY`.
+Phase 9 in `docs/saas-architecture.md` names billing and a custom domain beside this embed. Billing is Safepay credit packs ([`docs/payments-safepay.md`](payments-safepay.md)). A custom domain is still future work. Neither is part of this embed. Phase 8C left framing unset until this model existed: only the embed document may be framed, and the dashboard, auth, and standalone try-on page send `X-Frame-Options: DENY`.
 
 ## Where the snippet comes from
 

@@ -325,7 +325,7 @@ Do not hand-edit generated rows.
 |-------|---------|
 | 6 | `try_on_sessions`, `credit_transactions.session_id`, `queue_try_on_session`, reserve/consume/release RPC usage, try-on routes |
 | 8 | `admin_grant_brand_credits`, `admin_revoke_brand_credits`, `audit_logs`, `platform_role`, platform-admin UI |
-| — | Billing, Stripe, credit purchases, merchant grant buttons, Inngest workers |
+| — | Billing. Later specified as Safepay credit packs in `docs/payments-safepay.md` (not Stripe). Merchant grant buttons and Inngest workers were also out of scope here |
 
 ## Manual verification checklist
 
