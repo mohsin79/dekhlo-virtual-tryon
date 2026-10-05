@@ -58,7 +58,7 @@ export function Uploader({
         </span>
         <div>
           <div style={{ fontFamily: "var(--font-heading)", fontSize: 18, lineHeight: 1.2 }}>{title}</div>
-          <div className="text-muted" style={{ fontSize: 12.5 }}>{hint}</div>
+          <div className="text-muted-foreground" style={{ fontSize: 14, lineHeight: 1.4 }}>{hint}</div>
         </div>
       </div>
 
@@ -96,7 +96,7 @@ export function Uploader({
           />
         ) : (
           <span
-            className="text-muted"
+            className="text-muted-foreground"
             style={{
               position: "absolute",
               inset: 0,
@@ -104,7 +104,8 @@ export function Uploader({
               placeItems: "center",
               textAlign: "center",
               padding: 20,
-              fontSize: 13,
+              fontSize: 14,
+              lineHeight: 1.4,
             }}
           >
             {placeholder}

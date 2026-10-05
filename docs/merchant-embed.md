@@ -8,19 +8,15 @@ Phase 9 in `docs/saas-architecture.md` names an embed SDK next to Stripe and a c
 
 1. Sign in and open **Dashboard → Products**.
 2. On an **active** product, copy **Embed on your product page**.
-3. Paste that iframe into the store's product template, where the try-on should appear.
+3. Paste that snippet into the store's product template, where the try-on should appear.
 
 Inactive products do not get a snippet. The public link on the same card is unchanged: `/try/[brandSlug]/[productSlug]`.
 
-The snippet looks like this:
-
-```html
-<iframe src="https://YOUR-DEKHLO-HOST/embed/BRAND-SLUG/PRODUCT-SLUG" title="Virtual try-on" width="100%" height="960" style="border:0;max-width:100%;" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>
-```
+The dashboard copies an iframe plus a short script. The script listens for a `dekhlo:embed-resize` message and sets the frame height. That message is only a type and a number. It does not include the session token, the photo, or the result. The frame starts at 960px and grows to the try-on, so the result heading and image are not clipped inside the frame.
 
 Replace the host and slugs with the values from the dashboard. The slugs are the same ones in the public try-on link.
 
-Stores that would rather paste a script can use the loader. It only creates that iframe. It does not read the store page or call the try-on API:
+Stores that would rather paste a script can use the loader. It creates the same iframe and grows it from the same height message. It does not read the store page or call the try-on API:
 
 ```html
 <script src="https://YOUR-DEKHLO-HOST/embed/loader" data-brand="BRAND-SLUG" data-product="PRODUCT-SLUG" async></script>

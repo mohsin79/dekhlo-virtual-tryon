@@ -46,6 +46,7 @@ import {
   readEmbedRevealedToken,
   shouldRetryEmbedSessionCreate,
 } from "@/lib/embed/session-presentation";
+import { embedResultScrollTop } from "@/lib/embed/resize";
 import {
   pollTryOnSessionUntilTerminal,
   TryOnSessionTerminalError,
@@ -125,6 +126,24 @@ export function ProductTryOn({
   const [inFlightSession, setInFlightSession] = useState(false);
   const [embedToken, setEmbedToken] = useState<string | null>(null);
   const embedTokenRef = useRef<string | null>(null);
+  const resultSectionRef = useRef<HTMLElement>(null);
+
+  const syncEmbedResultScroll = useCallback(() => {
+    const node = resultSectionRef.current;
+
+    if (!node) {
+      return;
+    }
+
+    const resultTop = node.getBoundingClientRect().top + window.scrollY;
+    const top = embedResultScrollTop({
+      documentHeight: document.documentElement.scrollHeight,
+      frameHeight: window.innerHeight,
+      resultTop,
+    });
+
+    window.scrollTo({ top, left: 0 });
+  }, []);
 
   const rememberEmbedCredential = useCallback(
     (sessionId: string, token: string) => {
@@ -665,6 +684,19 @@ export function ProductTryOn({
     rememberEmbedCredential,
   ]);
 
+  useEffect(() => {
+    if (!embedMode || phase !== "done") {
+      return;
+    }
+
+    syncEmbedResultScroll();
+    window.addEventListener("resize", syncEmbedResultScroll);
+
+    return () => {
+      window.removeEventListener("resize", syncEmbedResultScroll);
+    };
+  }, [currentResultUrl, embedMode, phase, syncEmbedResultScroll]);
+
   const canGenerate = canStartProductTryOnGeneration({
     phase,
     hasPersonFile: !!personFile,
@@ -679,9 +711,9 @@ export function ProductTryOn({
     !!previousResultUrl && (phase === "awaiting_new_photo" || phase === "photo_selected" || busy);
 
   return (
-    <div className="space-y-8">
-      <section className="grid gap-6 md:grid-cols-2">
-        <div className="space-y-3">
+    <div className="w-full min-w-0 max-w-full space-y-8">
+      <section className="grid w-full min-w-0 gap-6 md:grid-cols-2">
+        <div className="min-w-0 space-y-3">
           <p className="text-sm uppercase tracking-[0.18em] text-muted-foreground">Selected product</p>
           <h2 className="font-heading text-2xl text-foreground">{productName}</h2>
           <div className="overflow-hidden rounded-xl border border-border/70 bg-surface/80">
@@ -694,7 +726,7 @@ export function ProductTryOn({
           </div>
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {showRestoredPrivacyNotice ? (
             <p className="rounded-xl border border-border/70 bg-surface/60 p-4 text-sm text-muted-foreground">
               {RESTORED_TRY_ON_PRIVACY_MESSAGE}
@@ -758,7 +790,10 @@ export function ProductTryOn({
       </section>
 
       {(busy || phase === "done" || showPreviousResult) && (
-        <section className="rounded-xl border border-border/70 bg-surface/80 p-6">
+        <section
+          ref={resultSectionRef}
+          className="scroll-mt-4 w-full min-w-0 max-w-full rounded-xl border border-border/70 bg-surface/80 p-4 sm:p-6"
+        >
           {busy ? (
             <p className="text-muted-foreground">
               {phase === "creating" && "Creating secure session…"}
@@ -772,19 +807,28 @@ export function ProductTryOn({
           {showPreviousResult && previousResultUrl ? (
             <div className="mb-6 space-y-3">
               <h3 className="font-heading text-lg text-muted-foreground">Previous result</h3>
-              <div className="overflow-hidden rounded-xl opacity-90">
+              <div className="w-full min-w-0 max-w-full overflow-hidden rounded-xl opacity-90">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={previousResultUrl} alt="Previous try-on result" className="w-full max-w-md object-cover" />
+                <img
+                  src={previousResultUrl}
+                  alt="Previous try-on result"
+                  className="h-auto w-full max-w-full object-contain"
+                />
               </div>
             </div>
           ) : null}
 
           {displayResultUrl ? (
-            <div className="space-y-4">
+            <div className="w-full min-w-0 max-w-full space-y-4">
               <h3 className="font-heading text-xl">Your try-on result</h3>
-              <div className="overflow-hidden rounded-xl">
+              <div className="w-full min-w-0 max-w-full overflow-hidden rounded-xl">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={displayResultUrl} alt="Try-on result" className="w-full max-w-md object-cover" />
+                <img
+                  src={displayResultUrl}
+                  alt="Try-on result"
+                  className="h-auto w-full max-w-full object-contain"
+                  onLoad={embedMode ? syncEmbedResultScroll : undefined}
+                />
               </div>
               <a className="btn btn-secondary inline-flex" href={displayResultUrl} download="dekhlo-try-on.png">
                 Download result

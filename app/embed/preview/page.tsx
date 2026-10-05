@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
-import {
-  EMBED_IFRAME_HEIGHT,
-  buildMerchantEmbedSnippet,
-  parseEmbedPreviewSlugs,
-} from "@/lib/catalog/merchant-embed";
+import { EmbedHostFrame } from "@/components/embed/embed-host-frame";
+import { buildMerchantEmbedSnippet, parseEmbedPreviewSlugs } from "@/lib/catalog/merchant-embed";
 import { getSiteUrl } from "@/lib/env";
 
 export const metadata: Metadata = {
@@ -26,8 +23,8 @@ export default async function EmbedPreviewPage({ searchParams }: PageProps) {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto grid max-w-6xl gap-8 px-6 py-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-        <section className="space-y-4">
+      <div className="mx-auto grid w-full min-w-0 max-w-6xl gap-8 px-6 py-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+        <section className="min-w-0 space-y-4">
           <p className="text-sm uppercase tracking-[0.18em] text-muted-foreground">Sample store</p>
           <h1 className="font-heading text-4xl">Black T-shirt</h1>
           <p className="max-w-xl text-muted-foreground">
@@ -54,18 +51,10 @@ export default async function EmbedPreviewPage({ searchParams }: PageProps) {
           )}
         </section>
 
-        <section className="space-y-3">
+        <section className="min-w-0 space-y-3">
           <h2 className="font-heading text-2xl">Try it on</h2>
           {slugs && snippet ? (
-            <iframe
-              src={`/embed/${slugs.brandSlug}/${slugs.productSlug}`}
-              title="Virtual try-on"
-              width="100%"
-              height={EMBED_IFRAME_HEIGHT}
-              style={{ border: 0, maxWidth: "100%" }}
-              loading="lazy"
-              referrerPolicy="strict-origin-when-cross-origin"
-            />
+            <EmbedHostFrame src={`/embed/${slugs.brandSlug}/${slugs.productSlug}`} title="Virtual try-on" />
           ) : (
             <div className="flex h-80 items-center justify-center rounded-xl border border-dashed border-border text-sm text-muted-foreground">
               Embed preview appears here once both slugs are valid.

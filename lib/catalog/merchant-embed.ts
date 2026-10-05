@@ -1,8 +1,47 @@
+import {
+  EMBED_RESIZE_MAX_HEIGHT,
+  EMBED_RESIZE_MESSAGE_TYPE,
+  EMBED_RESIZE_MIN_HEIGHT,
+} from "@/lib/embed/resize";
 import { BRAND_SLUG_PATTERN } from "@/lib/validation/brand";
 import { PRODUCT_SLUG_PATTERN } from "@/lib/validation/product";
 
-/** Tall enough for the photo picker, consent, and result without a host-page script. */
+/** Starting height. The frame grows to its content after the resize message. */
 export const EMBED_IFRAME_HEIGHT = 960;
+
+/**
+ * Host listener for one iframe. It sets style.height and ignores every other
+ * field, so a message cannot deliver a token or a photo to the store page.
+ */
+export function merchantEmbedHostResizeListener(frameExpression: string): string {
+  return `window.addEventListener("message", function (event) {
+    var target = ${frameExpression};
+    if (!target || event.source !== target.contentWindow) {
+      return;
+    }
+    var expected;
+    try {
+      expected = new URL(target.src, window.location.href).origin;
+    } catch (error) {
+      return;
+    }
+    if (event.origin !== expected) {
+      return;
+    }
+    var data = event.data;
+    if (!data || data.type !== "${EMBED_RESIZE_MESSAGE_TYPE}" || typeof data.height !== "number" || !isFinite(data.height)) {
+      return;
+    }
+    if (Object.keys(data).length !== 2) {
+      return;
+    }
+    var height = Math.ceil(data.height);
+    if (height < ${EMBED_RESIZE_MIN_HEIGHT} || height > ${EMBED_RESIZE_MAX_HEIGHT}) {
+      return;
+    }
+    target.style.height = height + "px";
+  });`;
+}
 
 function isCatalogSlug(value: string, pattern: RegExp): boolean {
   return value.length > 0 && value.length <= 100 && pattern.test(value);
@@ -72,8 +111,18 @@ export function buildMerchantEmbedSnippet(
   }
 
   const src = escapeHtmlAttribute(url);
+  const listener = merchantEmbedHostResizeListener("frame");
 
-  return `<iframe src="${src}" title="Virtual try-on" width="100%" height="${EMBED_IFRAME_HEIGHT}" style="border:0;max-width:100%;" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+  return `<iframe src="${src}" title="Virtual try-on" width="100%" height="${EMBED_IFRAME_HEIGHT}" style="border:0;display:block;width:100%;max-width:100%;" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+<script>
+(function () {
+  var frame = document.currentScript && document.currentScript.previousElementSibling;
+  if (!frame || String(frame.tagName).toUpperCase() !== "IFRAME") {
+    return;
+  }
+  ${listener}
+})();
+</script>`;
 }
 
 /** Optional loader for stores that would rather paste a script tag than an iframe. */
@@ -114,10 +163,12 @@ export function parseEmbedPreviewSlugs(input: {
 }
 
 /**
- * Host-page loader. It creates the same iframe as the canonical snippet and
- * does not read the store page, call the try-on API, or listen for messages.
+ * Host-page loader. It creates the embed iframe and applies height-only
+ * resize messages. It does not read the store page or call the try-on API.
  */
 export function merchantEmbedLoaderSource(): string {
+  const listener = merchantEmbedHostResizeListener("iframe");
+
   return `(function () {
   var script = document.currentScript;
   if (!script || !script.src) {
@@ -146,10 +197,13 @@ export function merchantEmbedLoaderSource(): string {
   iframe.width = "100%";
   iframe.height = "${EMBED_IFRAME_HEIGHT}";
   iframe.style.border = "0";
+  iframe.style.display = "block";
+  iframe.style.width = "100%";
   iframe.style.maxWidth = "100%";
   iframe.loading = "lazy";
   iframe.referrerPolicy = "strict-origin-when-cross-origin";
   script.insertAdjacentElement("afterend", iframe);
+  ${listener}
 })();
 `;
 }

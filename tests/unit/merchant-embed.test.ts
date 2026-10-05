@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import vm from "node:vm";
 import {
   EMBED_IFRAME_HEIGHT,
   buildMerchantEmbedPath,
@@ -11,6 +12,11 @@ import {
   parseEmbedPreviewSlugs,
 } from "@/lib/catalog/merchant-embed";
 import { framingHeadersForPath } from "@/lib/embed/framing";
+import {
+  EMBED_RESIZE_MESSAGE_TYPE,
+  embedResultScrollTop,
+  readEmbedResizeHeight,
+} from "@/lib/embed/resize";
 import {
   buildSessionAuthHeaders,
   buildTryOnSessionCreateHeaders,
@@ -78,9 +84,59 @@ describe("merchant embed snippet", () => {
     assert.match(snippet ?? "", /title="Virtual try-on"/);
     assert.match(snippet ?? "", new RegExp(`height="${EMBED_IFRAME_HEIGHT}"`));
     assert.match(snippet ?? "", /referrerpolicy="strict-origin-when-cross-origin"/);
+    assert.match(snippet ?? "", /display:block;width:100%;max-width:100%/);
+    assert.match(snippet ?? "", new RegExp(EMBED_RESIZE_MESSAGE_TYPE));
+    assert.match(snippet ?? "", /event\.origin !== expected/);
+    assert.match(snippet ?? "", /var frame = document\.currentScript/);
+    assert.match(snippet ?? "", /var target = frame;/);
+    assert.match(snippet ?? "", /target\.style\.height = height \+ "px"/);
+    assert.doesNotMatch(snippet ?? "", /var frame = frame/);
     assert.doesNotMatch(snippet ?? "", /sandbox/i);
     assert.doesNotMatch(snippet ?? "", /allow=/i);
     assert.doesNotMatch(snippet ?? "", /sessionAccessToken|service_role|SUPABASE_SECRET|OPENAI/i);
+  });
+
+  it("grows the pasted iframe when the embed posts a height", () => {
+    const snippet = buildMerchantEmbedSnippet(SITE, BRAND, PRODUCT);
+    const script = snippet?.match(/<script>([\s\S]*)<\/script>/)?.[1];
+    const iframe = {
+      tagName: "IFRAME",
+      src: `${SITE}/embed/${BRAND}/${PRODUCT}`,
+      contentWindow: {},
+      style: { height: "" },
+    };
+    const listeners: Array<(event: unknown) => void> = [];
+
+    assert.ok(script);
+    vm.runInNewContext(script ?? "", {
+      document: { currentScript: { previousElementSibling: iframe } },
+      window: {
+        addEventListener(_type: string, listener: (event: unknown) => void) {
+          listeners.push(listener);
+        },
+        location: { href: "https://shop.example/products/shirt" },
+      },
+      URL,
+      Object,
+      Math,
+      isFinite,
+      String,
+    });
+
+    assert.equal(listeners.length, 1);
+    listeners[0]?.({
+      source: iframe.contentWindow,
+      origin: new URL(SITE).origin,
+      data: { type: EMBED_RESIZE_MESSAGE_TYPE, height: 1480 },
+    });
+    assert.equal(iframe.style.height, "1480px");
+
+    listeners[0]?.({
+      source: {},
+      origin: new URL(SITE).origin,
+      data: { type: EMBED_RESIZE_MESSAGE_TYPE, height: 1800 },
+    });
+    assert.equal(iframe.style.height, "1480px");
   });
 
   it("returns a loader script tag that only names the brand and product", () => {
@@ -100,6 +156,11 @@ describe("embed loader script", () => {
     assert.match(source, /\/embed\/" \+ brand \+ "\/" \+ product/);
     assert.match(source, /data-brand/);
     assert.match(source, /data-product/);
+    assert.match(source, /event\.origin !== expected/);
+    assert.match(source, /event\.source !== target\.contentWindow/);
+    assert.match(source, /var target = iframe;/);
+    assert.match(source, /target\.style\.height = height \+ "px"/);
+    assert.match(source, /iframe\.style\.width = "100%"/);
     assert.doesNotMatch(source, /postMessage|document\.cookie|localStorage|sessionStorage|fetch\(|XMLHttpRequest/);
     assert.doesNotMatch(source, /sessionAccessToken|service_role|OPENAI/i);
   });
@@ -303,6 +364,49 @@ describe("embed framing", () => {
   });
 });
 
+describe("embed frame resize", () => {
+  it("accepts a height-only message and rejects anything else", () => {
+    assert.equal(readEmbedResizeHeight({ type: EMBED_RESIZE_MESSAGE_TYPE, height: 1200 }), 1200);
+    assert.equal(readEmbedResizeHeight({ type: EMBED_RESIZE_MESSAGE_TYPE, height: 1200.2 }), 1201);
+    assert.equal(readEmbedResizeHeight({ height: 1200, type: EMBED_RESIZE_MESSAGE_TYPE }), 1200);
+    assert.equal(readEmbedResizeHeight({ type: EMBED_RESIZE_MESSAGE_TYPE, height: 10 }), 640);
+    assert.equal(readEmbedResizeHeight({ type: EMBED_RESIZE_MESSAGE_TYPE, height: 90000 }), 8000);
+    assert.equal(
+      readEmbedResizeHeight({ type: EMBED_RESIZE_MESSAGE_TYPE, height: 1200, sessionAccessToken: "x" }),
+      null,
+    );
+    assert.equal(readEmbedResizeHeight({ type: EMBED_RESIZE_MESSAGE_TYPE, height: "1200" }), null);
+    assert.equal(readEmbedResizeHeight({ type: "other", height: 1200 }), null);
+    assert.equal(readEmbedResizeHeight(null), null);
+  });
+
+  it("keeps a fitted frame at the top and scrolls a short frame to the result heading", () => {
+    assert.equal(
+      embedResultScrollTop({ documentHeight: 1400, frameHeight: 1400, resultTop: 900 }),
+      0,
+    );
+    assert.equal(
+      embedResultScrollTop({ documentHeight: 1800, frameHeight: 960, resultTop: 1100 }),
+      840,
+    );
+    assert.equal(
+      embedResultScrollTop({ documentHeight: 1800, frameHeight: 960, resultTop: 20 }),
+      4,
+    );
+  });
+
+  it("posts only the resize type and height from the embed document", () => {
+    const source = readFileSync("components/embed/embed-frame-resize.tsx", "utf8");
+
+    assert.match(source, /postMessage\(\{ type: EMBED_RESIZE_MESSAGE_TYPE, height \}, "\*"\)/);
+    assert.match(source, /data-embed-frame-root/);
+    assert.doesNotMatch(source, /\.scrollHeight/);
+    assert.doesNotMatch(source, /sessionAccessToken|resultUrl|uploadUrl/);
+    assert.match(readFileSync("components/embed/embed-host-frame.tsx", "utf8"), /readEmbedResizeHeight\(event\.data\)/);
+    assert.match(readFileSync("components/embed/embed-host-frame.tsx", "utf8"), /event\.origin !== expectedOrigin/);
+  });
+});
+
 describe("embed surfaces", () => {
   it("uses embed mode only on the embed document", () => {
     const embedPage = readFileSync("app/embed/[brandSlug]/[productSlug]/page.tsx", "utf8");
@@ -310,9 +414,20 @@ describe("embed surfaces", () => {
     const preview = readFileSync("app/embed/preview/page.tsx", "utf8");
 
     assert.match(embedPage, /variant="embed"/);
+    assert.match(embedPage, /EmbedFrameResize/);
+    assert.match(embedPage, /data-embed-frame-root/);
+    assert.match(embedPage, /overflow-x-clip/);
     assert.doesNotMatch(tryPage, /variant="embed"/);
     assert.doesNotMatch(preview, /sessionStorage|contentDocument|contentWindow|postMessage/);
+    assert.match(preview, /EmbedHostFrame/);
     assert.match(preview, /\/embed\/preview\?brand=/);
+
+    const tryOn = readFileSync("components/ProductTryOn.tsx", "utf8");
+    const resultImage = tryOn.slice(tryOn.indexOf('alt="Try-on result"'));
+
+    assert.match(resultImage, /object-contain/);
+    assert.doesNotMatch(resultImage.slice(0, 240), /object-cover/);
+    assert.match(tryOn, /embedResultScrollTop/);
   });
 
   it("passes the request into session authorization so an embed header can be read", () => {
