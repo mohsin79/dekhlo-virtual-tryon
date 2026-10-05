@@ -195,7 +195,6 @@ export async function startSafepayCreditPackCheckout(input: {
         provider_environment: order.providerEnvironment,
         status: order.status,
         credit_idempotency_key: order.creditIdempotencyKey,
-        metadata: { price_note: "placeholder" },
       });
 
       if (error) {
