@@ -3,7 +3,7 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET search_path TO extensions, public, auth;
 
-SELECT plan(11);
+SELECT plan(15);
 
 SELECT has_enum('public', 'platform_role', 'platform_role enum exists');
 SELECT enum_has_labels(
@@ -14,6 +14,25 @@ SELECT enum_has_labels(
 );
 
 SELECT has_column('public', 'profiles', 'platform_role', 'profiles.platform_role exists');
+
+SELECT ok(
+  NOT has_column_privilege('authenticated', 'public.profiles', 'platform_role', 'UPDATE'),
+  'authenticated cannot update profiles.platform_role'
+);
+SELECT ok(
+  NOT has_column_privilege('authenticated', 'public.profiles', 'id', 'UPDATE'),
+  'authenticated cannot update profiles.id'
+);
+SELECT ok(
+  has_column_privilege('authenticated', 'public.profiles', 'full_name', 'UPDATE')
+  AND has_column_privilege('authenticated', 'public.profiles', 'avatar_path', 'UPDATE'),
+  'authenticated can still update full_name and avatar_path'
+);
+SELECT ok(
+  NOT has_function_privilege('authenticated', 'public.handle_new_user()', 'EXECUTE')
+  AND NOT has_function_privilege('anon', 'public.initialize_brand_credit_balance()', 'EXECUTE'),
+  'internal trigger functions are not callable by API roles'
+);
 
 SELECT tests.create_auth_user(
   '11111111-1111-1111-1111-111111111111'::uuid,
